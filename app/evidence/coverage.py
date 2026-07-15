@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+from typing import Literal
+
+from app.models import CoverageReport, EvidenceRecord, SourceRecord
+from app.ranking.lexical import tokenize
+
+
+def analyze_coverage(
+    topics: list[str], evidence: list[EvidenceRecord], sources: list[SourceRecord]
+) -> CoverageReport:
+    covered: list[str] = []
+    missing: list[str] = []
+    evidence_tokens = [
+        set(tokenize(item.text)) for item in evidence if item.injection_risk != "high"
+    ]
+    for topic in topics:
+        terms = set(tokenize(topic))
+        best = max(
+            (len(terms & tokens) / max(1, len(terms)) for tokens in evidence_tokens), default=0.0
+        )
+        (covered if best >= 0.45 else missing).append(topic)
+    topic_score = len(covered) / max(1, len(topics))
+    diversity = min(1.0, len({source.domain for source in sources}) / 3)
+    evidence_strength = min(1.0, len(evidence) / 8)
+    score = round(0.55 * topic_score + 0.25 * diversity + 0.20 * evidence_strength, 3)
+    status: Literal["insufficient", "weak", "moderate", "strong"]
+    if score >= 0.8:
+        status = "strong"
+    elif score >= 0.6:
+        status = "moderate"
+    elif score >= 0.3:
+        status = "weak"
+    else:
+        status = "insufficient"
+    primary = any(
+        source.source_type in {"official_documentation", "primary_institution", "source_repository"}
+        for source in sources
+    )
+    return CoverageReport(
+        score=score,
+        status=status,
+        covered_topics=covered,
+        missing_topics=missing,
+        primary_source_present=primary,
+        independent_source_count=len({source.domain for source in sources}),
+    )

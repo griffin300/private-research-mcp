@@ -1,0 +1,182 @@
+name: private-research-mcp
+
+x-security: &security
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+
+services:
+  tor-search:
+    <<: *security
+    build:
+      context: ./config/tor-search
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
+      - /var/lib/tor:noexec,nosuid,size=64m,uid=100,gid=101
+    networks:
+      - internal_private
+      - egress_search
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+          cpus: "0.50"
+
+  tor-fetch:
+    <<: *security
+    build:
+      context: ./config/tor-fetch
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m
+      - /var/lib/tor:noexec,nosuid,size=64m,uid=100,gid=101
+    networks:
+      - internal_private
+      - egress_fetch
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+          cpus: "0.50"
+
+  searxng:
+    <<: *security
+    image: searxng/searxng:2026.7.10-4abac08de
+    depends_on:
+      tor-search:
+        condition: service_healthy
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?run scripts/setup.ps1 first}
+      HTTP_PROXY: socks5h://tor-search:9050
+      HTTPS_PROXY: socks5h://tor-search:9050
+      ALL_PROXY: socks5h://tor-search:9050
+      NO_PROXY: localhost,127.0.0.1,searxng,tor-search
+    volumes:
+      - ./config/searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./config/searxng/limiter.toml:/etc/searxng/limiter.toml:ro
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=32m
+    networks:
+      - internal_private
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 4s
+      retries: 18
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.00"
+
+  browser-service:
+    <<: *security
+    profiles: ["browser"]
+    build:
+      context: .
+      target: browser
+    depends_on:
+      tor-fetch:
+        condition: service_healthy
+    environment:
+      BROWSER_PROXY_URL: socks5://tor-fetch:9050
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=256m
+      - /home/browser:noexec,nosuid,size=32m
+    networks:
+      - internal_private
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: "1.50"
+
+  app:
+    <<: *security
+    build:
+      context: .
+      target: app
+    depends_on:
+      tor-fetch:
+        condition: service_healthy
+      searxng:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      PRM_SEARXNG_BASE_URL: http://searxng:8080
+      PRM_SEARCH_PROXY_URL: socks5://tor-search:9050
+      PRM_FETCH_PROXY_URL: socks5://tor-fetch:9050
+      PRM_ADMIN_HOST: 0.0.0.0
+      PRM_CONTAINERIZED: "true"
+    volumes:
+      - research-data:/data
+      - ./models:/models:ro
+      - ./benchmarks/results:/app/benchmarks/results
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=128m
+    networks:
+      - internal_private
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "2.00"
+
+  mcp-bridge:
+    <<: *security
+    cap_add:
+      - NET_ADMIN
+      - SETGID
+      - SETUID
+    build:
+      context: .
+      dockerfile: mcp_bridge/Dockerfile
+    depends_on:
+      app:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=8m
+    networks:
+      - internal_private
+      - host_loopback
+    ports:
+      - "127.0.0.1:8088:8088"
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: "0.20"
+
+networks:
+  internal_private:
+    internal: true
+    driver: bridge
+  egress_search:
+    driver: bridge
+  egress_fetch:
+    driver: bridge
+  host_loopback:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+
+volumes:
+  research-data:

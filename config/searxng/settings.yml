@@ -1,0 +1,38 @@
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "Private Research SearXNG"
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  secret_key: "${SEARXNG_SECRET}"
+  limiter: false
+  image_proxy: false
+  method: "GET"
+
+outgoing:
+  request_timeout: 15.0
+  max_request_timeout: 30.0
+  enable_http2: false
+  proxies:
+    all://:
+      - socks5h://tor-search:9050
+
+ui:
+  static_use_hash: true
+  query_in_title: false
+
+enabled_plugins:
+  - "Hash plugin"
+  - "Self Information"
+  - "Tracker URL remover"
+
