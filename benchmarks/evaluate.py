@@ -27,7 +27,7 @@ async def evaluate(limit: int | None, run_timeout: float) -> None:
             try:
                 if mode == "raw_searxng":
                     result = await asyncio.wait_for(
-                        run_baseline(runtime.pipeline.backend, question), timeout=run_timeout
+                        run_baseline(runtime.pipeline, question), timeout=run_timeout
                     )
                 else:
                     package = await asyncio.wait_for(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal
 
 from app.models import CoverageReport, EvidenceRecord, SourceRecord
-from app.ranking.lexical import tokenize
+from app.ranking.lexical import meaningful_tokens
 
 
 def analyze_coverage(
@@ -12,14 +12,15 @@ def analyze_coverage(
     covered: list[str] = []
     missing: list[str] = []
     evidence_tokens = [
-        set(tokenize(item.text)) for item in evidence if item.injection_risk != "high"
+        set(meaningful_tokens(item.text)) for item in evidence if item.injection_risk != "high"
     ]
     for topic in topics:
-        terms = set(tokenize(topic))
+        terms = set(meaningful_tokens(topic))
         best = max(
             (len(terms & tokens) / max(1, len(terms)) for tokens in evidence_tokens), default=0.0
         )
-        (covered if best >= 0.45 else missing).append(topic)
+        required = 1.0 if len(terms) <= 2 else 0.60
+        (covered if best >= required else missing).append(topic)
     topic_score = len(covered) / max(1, len(topics))
     diversity = min(1.0, len({source.domain for source in sources}) / 3)
     evidence_strength = min(1.0, len(evidence) / 8)

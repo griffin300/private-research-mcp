@@ -2,15 +2,15 @@
 
 `private-research-mcp` is a local evidence engine for LM Studio. It expands a question into focused queries, discovers URLs through SearXNG, retrieves pages through a separate Tor path, extracts main content, ranks passages locally, and returns exact citation targets. It does not synthesize an answer or substitute model memory when retrieval fails.
 
-Compared with a raw SearXNG MCP wrapper, it adds full-page retrieval, URL/content deduplication, source and passage ranking, freshness handling, coverage analysis, contradiction signals, prompt-injection quarantine, SSRF controls, caching, and evidence-level citations.
+Compared with a raw SearXNG MCP wrapper, it preserves the safe-normalized exact-query top 10 as an immutable snippet floor, then adds focused searches, full-page retrieval, URL/content deduplication, source and passage ranking, freshness handling, coverage analysis, contradiction signals, prompt-injection quarantine, SSRF controls, caching, and evidence-level citations. Expansion and extraction failures cannot evict that floor.
 
-Transient empty searches are retried with a simplified query and are never negatively cached. Deep-search work scales to the requested source count, while globally ranked evidence uses source-diversity and duplicate penalties to keep downstream local-model prompts focused.
+Transient empty expansion searches are retried with a simplified query and are never negatively cached. The exact-query result remains exact. SearXNG uses a broader set of independent engines, adds technical/science/news verticals only when the query calls for them, and uses bounded suspension windows so a rotated Tor exit can recover. Deep-search work scales to the requested source count, while globally ranked evidence uses relevance-gated source diversity and duplicate penalties to keep downstream local-model prompts focused.
 
 ## Status
 
 The core, Docker topology, MCP transports, tests, scripts, benchmark harness, and documentation are implemented. The release-blocking Docker privacy suite and live MCP search/read probes passed on the development host. Optional embeddings and browser fallback remain disabled by default.
 
-Known limits: the lexical BM25-like ranker is the active production path; FastEmbed/cross-encoder model provisioning and hybrid-score integration are not complete. The 50-question benchmark framework is complete, but only a one-question four-mode smoke run was executed during this build. The optional browser image and Tor route were live-tested but remain opt-in.
+Known limits: the enhanced lexical ranker is the active production path; FastEmbed/cross-encoder model provisioning and hybrid-score integration are not complete. Preserving raw context guarantees a retrieval/context non-regression invariant, not universal final-answer superiority: any generative model can still be distracted or make an error. The six-question gold suite is useful for regression detection but too small to support a universal real-world claim. The optional browser image and Tor route were live-tested but remain opt-in.
 
 ## Architecture
 
@@ -81,7 +81,7 @@ For LM Studio API clients, enable **Allow calling servers from mcp.json** (LM St
 
 ## MCP tools and examples
 
-- `search_web`: quick/standard/deep evidence search with deterministic budgets.
+- `search_web`: quality-first `auto` search by default, with explicit quick/standard/deep overrides.
 - `deep_research`: multiple rounds, gaps, contradictions, source quality, unresolved questions.
 - `read_url`: safe retrieval and question-aware passage ranking for one URL.
 - `search_status`: component health and unsafe-fallback state.
@@ -90,10 +90,10 @@ For LM Studio API clients, enable **Allow calling servers from mcp.json** (LM St
 Example arguments:
 
 ```json
-{"query":"What changed in Python MCP SDK 1.28?","mode":"standard","max_sources":8,"recency_days":90,"include_domains":["github.com"],"exclude_domains":[],"language":"en"}
+{"query":"What changed in Python MCP SDK 1.28?","mode":"auto","max_sources":8,"recency_days":90,"include_domains":["github.com"],"exclude_domains":[],"language":"en"}
 ```
 
-Quick uses up to 3 queries/5 pages/10 passages. Standard uses up to 6 queries/10 pages/20 passages and a gap round. Deep uses up to 15 queries/25 pages/40 passages and contradiction analysis. Query, result, page, passage, round, and browser budgets are bounded settings exposed as `PRM_QUICK_*`, `PRM_STANDARD_*`, and `PRM_DEEP_*` variables.
+Every mode first preserves up to 10 exact-query results in SearXNG order. Quick then uses up to 2 additional queries/5 pages/10 passages. Standard uses up to 5 additional queries/10 pages/20 passages and a gap round. Deep uses up to 14 additional queries/25 pages/40 passages and contradiction analysis. `auto` selects at least standard and escalates comparisons, analysis, current information, source requests, conflicts, and architecture questions to deep. Query, result, page, passage, round, and browser budgets are bounded settings exposed as `PRM_QUICK_*`, `PRM_STANDARD_*`, and `PRM_DEEP_*` variables.
 
 ## Configuration
 
@@ -110,6 +110,8 @@ PRM_ENABLE_BROWSER=false
 ```
 
 Strict mode refuses missing/shared proxies and never retries directly. `development` mode must be explicit and is not used by Docker Compose. An existing SearXNG can be selected with `PRM_SEARXNG_BASE_URL`, but it must still be reachable within the privacy topology for strict deployment.
+
+The default network timeout is 30 seconds because the quality-first configuration prefers waiting for useful Tor-routed sources over returning early. It remains bounded by `PRM_REQUEST_TIMEOUT_SECONDS`.
 
 The optional enhanced planner accepts only a separate loopback/private/Docker-internal OpenAI-compatible endpoint. It falls back to deterministic planning on failure and rejects reuse of the primary LM Studio endpoint.
 
@@ -134,7 +136,7 @@ The second command is intentionally not part of `stop.ps1`.
 
 `.\scripts\run-benchmark.ps1` evaluates 50 questions against raw SearXNG, quick, standard, and deep modes. It writes `benchmarks/results/latest-report.md`, raw JSON, and a human-review template. It does not invent answer-quality scores.
 
-`.\scripts\run-answer-quality.ps1` runs the smaller hand-authored gold-fact suite, then uses the currently loaded local LM Studio model to synthesize cited answers when its API is available. It reports retrieval readiness and deterministic answer-level fact/citation metrics separately; see `docs/EVALUATION.md` for the declared formulas and limitations.
+`.\scripts\run-answer-quality.ps1` runs a paired, repeated comparison of raw SearXNG against the production adaptive hybrid. It freezes one exact-query top-10 snapshot per question and supplies that identical snapshot to both systems; order alternates, and the hybrid only adds context. It then uses the currently loaded local LM Studio model to synthesize cited answers. It reports retrieval readiness and deterministic answer-level fact/citation metrics separately; see `docs/EVALUATION.md` for the declared formulas and limitations.
 
 The dashboard at `http://127.0.0.1:8088/dashboard` shows component health, cache activity, storage, recent opaque request metrics, coverage, and the last recorded privacy-suite result. It never displays raw queries by default.
 

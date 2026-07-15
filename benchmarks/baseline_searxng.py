@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import time
 
-from app.search.searxng import SearxngBackend
+from app.models import SearchResult
+from app.orchestration.pipeline import ResearchPipeline
 
 
 async def run_baseline(
-    backend: SearxngBackend, question: str, limit: int = 10
+    pipeline: ResearchPipeline,
+    question: str,
+    limit: int = 10,
+    exact_results: list[SearchResult] | None = None,
 ) -> dict[str, object]:
     started = time.monotonic()
-    results = await backend.search(question, language="en", recency_days=None, limit=limit)
+    results = (
+        exact_results[:limit]
+        if exact_results is not None
+        else await pipeline.search_exact(question, language="en", recency_days=None, limit=limit)
+    )
     return {
         "mode": "raw_searxng",
         "latency_seconds": round(time.monotonic() - started, 3),

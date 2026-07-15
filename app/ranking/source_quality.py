@@ -3,7 +3,7 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from app.models import SearchResult
-from app.ranking.lexical import tokenize
+from app.ranking.lexical import meaningful_tokens
 
 
 def source_type(url: str) -> str:
@@ -23,8 +23,8 @@ def source_type(url: str) -> str:
 
 
 def score_search_result(query: str, result: SearchResult) -> float:
-    query_terms = set(tokenize(query))
-    haystack = set(tokenize(f"{result.title} {result.snippet}"))
+    query_terms = set(meaningful_tokens(query))
+    haystack = set(meaningful_tokens(f"{result.title} {result.snippet}"))
     overlap = len(query_terms & haystack) / max(1, len(query_terms))
     engine_agreement = min(0.15, 0.04 * max(0, len(result.engines) - 1))
     type_bonus = (

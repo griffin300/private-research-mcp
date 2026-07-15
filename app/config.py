@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     allow_internal_llm_planner: bool = False
     allow_private_destinations: bool = False
     max_response_bytes: int = Field(default=5 * 1024 * 1024, ge=64 * 1024, le=50 * 1024 * 1024)
-    request_timeout_seconds: float = Field(default=20.0, ge=1, le=120)
+    request_timeout_seconds: float = Field(default=30.0, ge=1, le=120)
     max_redirects: int = Field(default=4, ge=0, le=10)
     per_domain_concurrency: int = Field(default=2, ge=1, le=10)
     search_min_interval_seconds: float = Field(default=1.25, ge=0, le=10)

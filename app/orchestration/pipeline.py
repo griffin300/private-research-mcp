@@ -14,6 +14,7 @@ from app.config import Settings
 from app.evidence.contradictions import detect_contradictions
 from app.evidence.coverage import analyze_coverage
 from app.evidence.ledger import build_evidence
+from app.evidence.prompt_injection import assess_injection
 from app.extract.chunker import chunk_text
 from app.extract.extractor import ExtractionError, PageExtractor
 from app.fetch.browser_fetcher import BrowserFetcher
@@ -29,6 +30,7 @@ from app.models import (
     ResearchPackage,
     SearchMode,
     SearchResult,
+    SearchSnippetRecord,
     SourceRecord,
 )
 from app.orchestration.budgets import budget_for
@@ -92,6 +94,7 @@ class ResearchPipeline:
         exclude_domains: list[str] | None = None,
         language: str = "en",
         rounds_override: int | None = None,
+        exact_results_override: list[SearchResult] | None = None,
     ) -> ResearchPackage:
         started = time.monotonic()
         request_id = uuid.uuid4().hex[:16]
@@ -110,27 +113,56 @@ class ResearchPipeline:
                 warnings.append(
                     f"Local enhanced planner failed ({exc}); deterministic planning was used."
                 )
-        rounds_limit = min(
+        expansion_round_limit = min(
             budget.rounds,
             rounds_override or budget.rounds,
             max(1, (query_limit + 1) // 2),
         )
-        raw: list[SearchResult] = []
         failures: list[dict[str, str]] = []
-        rounds = 0
-        queries_used = 0
-        queries_per_round = max(2, (query_limit + rounds_limit - 1) // rounds_limit)
-        for round_number in range(rounds_limit):
-            remaining_queries = query_limit - queries_used
-            if remaining_queries <= 0:
-                break
-            candidates_for_round = (
-                plan.queries if round_number == 0 else self._gap_queries(plan, round_number)
+        if exact_results_override is None:
+            exact_raw, exact_errors = await self._search_round(
+                [plan.original],
+                language=language,
+                recency_days=recency_days,
+                limit=10,
+                allow_fallback=False,
             )
-            round_queries = candidates_for_round[: min(queries_per_round, remaining_queries)]
+        else:
+            exact_raw = [item.model_copy(deep=True) for item in exact_results_override[:10]]
+            exact_errors = []
+        failures.extend(exact_errors)
+        exact_candidates = self._prepare_results(
+            exact_raw,
+            query,
+            include_domains or [],
+            exclude_domains or [],
+            sort_by_score=False,
+        )
+        expanded_raw: list[SearchResult] = []
+        rounds = 1
+        queries_used = 1
+        expansion_queries = _unique_queries(
+            [
+                candidate
+                for candidate in plan.queries
+                if candidate.casefold() != plan.original.casefold()
+            ]
+            + [
+                candidate
+                for round_number in range(1, expansion_round_limit)
+                for candidate in self._gap_queries(plan, round_number)
+            ]
+        )[: max(0, query_limit - 1)]
+        queries_per_round = max(
+            1,
+            (len(expansion_queries) + expansion_round_limit - 1) // expansion_round_limit,
+        )
+        for round_number in range(expansion_round_limit):
+            start = round_number * queries_per_round
+            round_queries = expansion_queries[start : start + queries_per_round]
             if not round_queries:
                 break
-            rounds += 1
+            rounds = round_number + 2  # Exact-query phase plus completed expansion phases.
             queries_used += len(round_queries)
             results, errors = await self._search_round(
                 round_queries,
@@ -138,10 +170,13 @@ class ResearchPipeline:
                 recency_days=recency_days,
                 limit=max(3, budget.raw_results // budget.queries),
             )
-            raw.extend(results)
+            expanded_raw.extend(results)
             failures.extend(errors)
             normalized = self._prepare_results(
-                raw, query, include_domains or [], exclude_domains or []
+                exact_raw + expanded_raw,
+                query,
+                include_domains or [],
+                exclude_domains or [],
             )
             primary_candidate = any(
                 source_type(item.url)
@@ -149,7 +184,7 @@ class ResearchPipeline:
                 for item in normalized
             )
             weak_discovery = len(normalized) < budget.pages * 2 or not primary_candidate
-            more_rounds = round_number + 1 < rounds_limit and queries_used < query_limit
+            more_rounds = round_number + 1 < expansion_round_limit and queries_used < query_limit
             if mode == SearchMode.DEEP and more_rounds:
                 strong_discovery = len(normalized) >= max(6, max_sources * 2) and primary_candidate
                 if round_number == 0 or not strong_discovery:
@@ -158,16 +193,41 @@ class ResearchPipeline:
                 continue
             if not more_rounds or not weak_discovery:
                 break
-        candidates = self._prepare_results(raw, query, include_domains or [], exclude_domains or [])
+        candidates = self._prepare_results(
+            exact_raw + expanded_raw,
+            query,
+            include_domains or [],
+            exclude_domains or [],
+        )
+        expanded_candidates = self._prepare_results(
+            expanded_raw,
+            query,
+            include_domains or [],
+            exclude_domains or [],
+        )
+        snippet_limit = min(20, max(10, max_sources))
+        exact_snippets = _build_search_snippets(
+            exact_candidates,
+            limit=min(10, snippet_limit),
+            query_role="exact",
+        )
+        search_snippets = exact_snippets + _build_search_snippets(
+            expanded_candidates,
+            limit=max(0, snippet_limit - len(exact_snippets)),
+            query_role="expanded",
+            start_index=len(exact_snippets) + 1,
+            exclude_urls={item.url for item in exact_snippets},
+        )
         if not candidates:
             warnings.append(
                 "No usable search results were returned; no model-memory fallback was used."
             )
         pages_to_fetch = min(budget.pages, max_sources, len(candidates))
+        fetch_candidates = _select_fetch_candidates(candidates, pages_to_fetch)
         ranked_sources = await self._retrieve(
             query,
             plan,
-            candidates[:pages_to_fetch],
+            fetch_candidates,
             failures,
             browser_budget=budget.browser_pages,
         )
@@ -184,6 +244,8 @@ class ResearchPipeline:
             item.injection_risk == "high" for _, passages in ranked_sources for item in passages
         ):
             warnings.append("High-risk prompt-injection content was quarantined from evidence.")
+        if any(item.injection_risk == "high" for item in search_snippets):
+            warnings.append("High-risk search snippet text was redacted from answer context.")
         if plan.time_sensitive and any(source.published_at is None for source in sources):
             warnings.append(
                 "One or more retained sources are undated for a time-sensitive question."
@@ -197,6 +259,7 @@ class ResearchPipeline:
             request_id=request_id,
             search_rounds=rounds,
             coverage=coverage,
+            search_snippets=search_snippets,
             sources=sources,
             evidence=evidence,
             contradictions=contradictions,
@@ -218,13 +281,31 @@ class ResearchPipeline:
             package,
             int((time.monotonic() - started) * 1000),
             queries_generated=queries_used,
-            raw_results=len(raw),
+            raw_results=len(exact_raw) + len(expanded_raw),
             pages_fetched=pages_to_fetch,
             extraction_failures=sum(item.get("stage") == "fetch_or_extract" for item in failures),
             browser_fallbacks=sum(source.fetch_method == "browser" for source in sources),
         )
         logger.info("research request completed", extra={"request_id": request_id})
         return package
+
+    async def search_exact(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        recency_days: int | None = None,
+        language: str = "en",
+    ) -> list[SearchResult]:
+        """Return safe-normalized exact-query results in SearXNG order."""
+        results = await self._search_cached(
+            query,
+            language=language,
+            recency_days=recency_days,
+            limit=max(1, limit),
+            allow_fallback=False,
+        )
+        return self._prepare_results(results, query, [], [], sort_by_score=False)
 
     async def deep_research(
         self,
@@ -242,7 +323,7 @@ class ResearchPipeline:
             mode=SearchMode.DEEP,
             max_sources=max_sources,
             recency_days=recency_days,
-            rounds_override=rounds,
+            rounds_override=max(1, rounds - 1),
         )
 
     async def read_url(self, url: str, question: str | None = None) -> dict[str, object]:
@@ -316,12 +397,22 @@ class ResearchPipeline:
         )
 
     async def _search_round(
-        self, queries: list[str], *, language: str, recency_days: int | None, limit: int
+        self,
+        queries: list[str],
+        *,
+        language: str,
+        recency_days: int | None,
+        limit: int,
+        allow_fallback: bool = True,
     ) -> tuple[list[SearchResult], list[dict[str, str]]]:
         responses = await asyncio.gather(
             *(
                 self._search_cached(
-                    query, language=language, recency_days=recency_days, limit=limit
+                    query,
+                    language=language,
+                    recency_days=recency_days,
+                    limit=limit,
+                    allow_fallback=allow_fallback,
                 )
                 for query in queries
             ),
@@ -343,12 +434,18 @@ class ResearchPipeline:
         return results, failures
 
     def _prepare_results(
-        self, results: list[SearchResult], query: str, include: list[str], exclude: list[str]
+        self,
+        results: list[SearchResult],
+        query: str,
+        include: list[str],
+        exclude: list[str],
+        *,
+        sort_by_score: bool = True,
     ) -> list[SearchResult]:
         normalized: list[SearchResult] = []
-        for result in results:
+        for original_rank, result in enumerate(results, start=1):
             try:
-                item = normalize_result(result)
+                item = normalize_result(result.model_copy(deep=True))
                 validate_url(item.url, allow_private=self.settings.allow_private_destinations)
             except (ValueError, UnsafeUrlError):
                 continue
@@ -356,11 +453,20 @@ class ResearchPipeline:
                 continue
             if exclude and _domain_matches(item.domain, exclude):
                 continue
+            if item.rank is None:
+                item.rank = original_rank
             item.preliminary_score = score_search_result(query, item)
             normalized.append(item)
-        return sorted(
-            deduplicate_results(normalized), key=lambda item: item.preliminary_score, reverse=True
+        deduplicated = (
+            deduplicate_results(normalized)
+            if sort_by_score
+            else _deduplicate_exact_results(normalized)
         )
+        for item in deduplicated:
+            item.preliminary_score = score_search_result(query, item)
+        if not sort_by_score:
+            return deduplicated
+        return sorted(deduplicated, key=lambda item: item.preliminary_score, reverse=True)
 
     async def _retrieve(
         self,
@@ -505,7 +611,13 @@ class ResearchPipeline:
         )
 
     async def _search_cached(
-        self, query: str, *, language: str, recency_days: int | None, limit: int
+        self,
+        query: str,
+        *,
+        language: str,
+        recency_days: int | None,
+        limit: int,
+        allow_fallback: bool = True,
     ) -> list[SearchResult]:
         key = Cache.key(
             {
@@ -513,6 +625,7 @@ class ResearchPipeline:
                 "language": language,
                 "recency_days": recency_days,
                 "limit": limit,
+                "allow_fallback": allow_fallback,
                 "backend": type(self.backend).__name__,
                 "privacy_mode": self.settings.privacy_mode,
             }
@@ -523,7 +636,7 @@ class ResearchPipeline:
         results = await self._backend_search(
             query, language=language, recency_days=recency_days, limit=limit
         )
-        if not results:
+        if not results and allow_fallback:
             fallback = _fallback_search_query(query)
             if fallback.casefold() != query.casefold():
                 results = await self._backend_search(
@@ -679,3 +792,116 @@ def _fallback_search_query(query: str) -> str:
         }
     ]
     return " ".join(tokens[:16]) or query
+
+
+def _build_search_snippets(
+    candidates: list[SearchResult],
+    *,
+    limit: int,
+    query_role: Literal["exact", "expanded"],
+    start_index: int = 1,
+    exclude_urls: set[str] | None = None,
+) -> list[SearchSnippetRecord]:
+    if limit <= 0:
+        return []
+    records: list[SearchSnippetRecord] = []
+    excluded = exclude_urls or set()
+    for rank, candidate in enumerate(candidates, start=1):
+        if len(records) >= min(limit, 20) or candidate.url in excluded:
+            continue
+        text = " ".join(candidate.snippet.split()).strip()
+        if not text and not candidate.title.strip():
+            continue
+        assessment = assess_injection(f"{candidate.title}\n{text}")
+        index = start_index + len(records)
+        title = candidate.title
+        if assessment.risk == "high":
+            title = "[quarantined high-risk search snippet]"
+            text = ""
+        records.append(
+            SearchSnippetRecord(
+                snippet_id=f"search_{index:03d}",
+                rank=candidate.rank if query_role == "exact" and candidate.rank else rank,
+                query_role=query_role,
+                url=candidate.url,
+                title=title,
+                text=text,
+                domain=candidate.domain or (urlsplit(candidate.url).hostname or ""),
+                engines=candidate.engines or [candidate.engine],
+                published_at=candidate.published_at,
+                relevance_score=candidate.preliminary_score,
+                injection_risk=assessment.risk,  # type: ignore[arg-type]
+                injection_reasons=assessment.reasons,
+                citation=f"[search_{index:03d}]",
+            )
+        )
+    return records
+
+
+def _select_fetch_candidates(candidates: list[SearchResult], limit: int) -> list[SearchResult]:
+    if limit <= 0:
+        return []
+    selected: list[SearchResult] = [candidates[0]] if candidates else []
+    if len(selected) >= limit:
+        return selected
+    top_score = candidates[0].preliminary_score if candidates else 0.0
+    eligible = [
+        candidate
+        for candidate in candidates[: max(10, limit * 3)]
+        if candidate.preliminary_score >= max(0.15, top_score * 0.55)
+    ]
+    primary = next(
+        (
+            candidate
+            for candidate in eligible
+            if source_type(candidate.url)
+            in {"official_documentation", "primary_institution", "source_repository"}
+            and candidate.canonical_url not in {item.canonical_url for item in selected}
+        ),
+        None,
+    )
+    if primary is not None:
+        selected.append(primary)
+    for candidate in eligible:
+        if len(selected) >= limit:
+            break
+        if candidate.canonical_url not in {
+            item.canonical_url for item in selected
+        } and candidate.domain not in {item.domain for item in selected}:
+            selected.append(candidate)
+    for candidate in candidates:
+        if len(selected) >= limit:
+            break
+        if candidate.canonical_url not in {item.canonical_url for item in selected}:
+            selected.append(candidate)
+    return selected
+
+
+def _unique_queries(queries: list[str]) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        compact = " ".join(query.split()).strip()
+        key = compact.casefold()
+        if compact and key not in seen:
+            seen.add(key)
+            unique.append(compact)
+    return unique
+
+
+def _deduplicate_exact_results(results: list[SearchResult]) -> list[SearchResult]:
+    """Preserve SearXNG rank while removing only exact canonical-URL duplicates."""
+    unique: list[SearchResult] = []
+    by_url: dict[str, SearchResult] = {}
+    for result in results:
+        key = result.canonical_url or result.url
+        existing = by_url.get(key)
+        if existing is not None:
+            existing.engines = sorted(set(existing.engines + result.engines))
+            existing.search_score = max(existing.search_score, result.search_score)
+            if len(result.snippet) > len(existing.snippet):
+                existing.snippet = result.snippet
+            continue
+        by_url[key] = result
+        unique.append(result)
+    return unique

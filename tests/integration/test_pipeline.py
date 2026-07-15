@@ -75,6 +75,42 @@ class ConcurrentBackend(FakeBackend):
         ]
 
 
+class OrderedBackend(FakeBackend):
+    def __init__(self, exact_query: str) -> None:
+        super().__init__()
+        self.exact_query = exact_query
+        self.limits: list[tuple[str, int]] = []
+
+    async def search(
+        self, query: str, *, language: str, recency_days: int | None, limit: int
+    ) -> list[SearchResult]:
+        self.calls += 1
+        self.limits.append((query, limit))
+        if query == self.exact_query:
+            return [
+                SearchResult(
+                    url=f"https://exact-{index}.example/result",
+                    title=f"Exact result {index}",
+                    snippet="" if index == 4 else f"Exact evidence {index}",
+                    engine="fixture",
+                )
+                for index in range(1, limit + 1)
+            ]
+        return [
+            SearchResult(
+                url=f"https://expanded.example/{abs(hash(query))}",
+                title="Expanded result",
+                snippet="Expanded evidence",
+                engine="fixture",
+            )
+        ]
+
+
+class AlwaysFailFetcher:
+    async def fetch(self, url: str) -> FetchResult:
+        raise FetchError("fixture failure")
+
+
 class FakeFetcher:
     def __init__(self) -> None:
         self.calls = 0
@@ -182,7 +218,7 @@ async def test_deep_query_budget_scales_to_requested_sources(tmp_path) -> None:
         cache=Cache(database),
     )
     result = await pipeline.search_web("MCP transport privacy", mode=SearchMode.DEEP, max_sources=3)
-    assert result.search_rounds == 3
+    assert result.search_rounds == 4
     assert backend.calls <= 6
 
 
@@ -259,3 +295,34 @@ async def test_read_url_honors_robots_disallow(tmp_path) -> None:
     )
     with pytest.raises(FetchError, match="robots"):
         await pipeline.read_url("https://example.com/private")
+
+
+@pytest.mark.integration
+async def test_search_web_preserves_exact_top_ten_when_all_fetches_fail(tmp_path) -> None:
+    question = "exact raw floor question"
+    settings = Settings(privacy_mode="development", database_path=tmp_path / "raw-floor.db")
+    database = Database(settings.database_path)
+    database.initialize()
+    backend = OrderedBackend(question)
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=backend,
+        fetcher=AlwaysFailFetcher(),  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+
+    result = await pipeline.search_web(question, mode=SearchMode.QUICK, max_sources=3)
+
+    assert backend.limits[0] == (question, 10)
+    assert [item.rank for item in result.search_snippets] == list(range(1, 11))
+    assert [item.query_role for item in result.search_snippets] == ["exact"] * 10
+    assert [item.title for item in result.search_snippets] == [
+        f"Exact result {index}" for index in range(1, 11)
+    ]
+    assert result.search_snippets[3].text == ""
+    assert not result.sources
+    assert not result.evidence
+    assert result.failures

@@ -7,9 +7,36 @@ general:
 search:
   safe_search: 1
   autocomplete: ""
+  ban_time_on_fail: 10
+  max_ban_time_on_fail: 60
+  suspended_times:
+    SearxEngineAccessDenied: 300
+    SearxEngineCaptcha: 600
+    SearxEngineTooManyRequests: 120
+    cf_SearxEngineCaptcha: 1800
+    cf_SearxEngineAccessDenied: 600
+    recaptcha_SearxEngineCaptcha: 1800
   formats:
     - html
     - json
+
+engines:
+  - name: bing
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: presearch
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: microsoft learn
+    disabled: false
+  - name: crossref
+    disabled: false
+  - name: openalex
+    disabled: false
 
 server:
   bind_address: "0.0.0.0"

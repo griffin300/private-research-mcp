@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SearchMode(StrEnum):
@@ -17,6 +17,7 @@ class SearchResult(BaseModel):
     url: str
     title: str
     snippet: str = ""
+    rank: int | None = Field(default=None, ge=1)
     engine: str = "unknown"
     engines: list[str] = Field(default_factory=list)
     domain: str = ""
@@ -24,6 +25,30 @@ class SearchResult(BaseModel):
     published_at: datetime | None = None
     search_score: float = 0.0
     preliminary_score: float = 0.0
+
+
+class SearchSnippetRecord(BaseModel):
+    snippet_id: str = Field(pattern=r"^search_\d{3,}$")
+    rank: int = Field(ge=1)
+    query_role: Literal["exact", "expanded"]
+    url: str
+    title: str
+    text: str
+    domain: str
+    engines: list[str] = Field(default_factory=list)
+    published_at: datetime | None = None
+    relevance_score: float = 0.0
+    verification: Literal["snippet_only"] = "snippet_only"
+    injection_risk: Literal["low", "medium", "high"] = "low"
+    injection_reasons: list[str] = Field(default_factory=list)
+    content_boundary: Literal["UNTRUSTED_SEARCH_SNIPPET"] = "UNTRUSTED_SEARCH_SNIPPET"
+    citation: str = Field(pattern=r"^\[search_\d{3,}\]$")
+
+    @model_validator(mode="after")
+    def validate_citation_matches_id(self) -> SearchSnippetRecord:
+        if self.citation != f"[{self.snippet_id}]":
+            raise ValueError("search snippet citation must match snippet_id")
+        return self
 
 
 class FetchResult(BaseModel):
@@ -126,6 +151,7 @@ class ResearchPackage(BaseModel):
     coverage: CoverageReport
     sources: list[SourceRecord]
     evidence: list[EvidenceRecord]
+    search_snippets: list[SearchSnippetRecord] = Field(default_factory=list)
     contradictions: list[Contradiction] = Field(default_factory=list)
     unresolved_questions: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

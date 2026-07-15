@@ -29,7 +29,19 @@ def build_evidence(
 def _select_diverse(
     candidates: list[tuple[SourceRecord, Passage]], limit: int
 ) -> list[tuple[SourceRecord, Passage]]:
-    remaining = list(candidates)
+    if not candidates:
+        return []
+
+    def base_score(item: tuple[SourceRecord, Passage]) -> float:
+        source, passage = item
+        return (
+            0.65 * passage.relevance_score
+            + 0.25 * source.quality_score
+            + 0.10 * source.relevance_score
+        )
+
+    maximum = max(base_score(item) for item in candidates)
+    remaining = [item for item in candidates if base_score(item) >= maximum * 0.30]
     selected: list[tuple[SourceRecord, Passage]] = []
     selected_tokens: list[set[str]] = []
     source_counts: dict[str, int] = {}
@@ -49,11 +61,7 @@ def _select_diverse(
             similarity = max(
                 (_jaccard(terms, existing) for existing in selected_tokens), default=0.0
             )
-            base = (
-                0.65 * passage.relevance_score
-                + 0.25 * source.quality_score
-                + 0.10 * source.relevance_score
-            )
+            base = base_score((source, passage))
             score = base - 0.25 * similarity - 0.05 * source_counts.get(source.source_id, 0)
             if score > best_score:
                 best_index = index

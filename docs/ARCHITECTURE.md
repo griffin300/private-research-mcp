@@ -8,16 +8,20 @@ SQLite uses WAL plus FTS5. Search responses, pages, evidence, and failure states
 
 Evidence IDs are assigned only after prompt-injection screening. A citation includes its source/evidence IDs; structured records retain URL, title, passage, heading, offsets, retrieval time, and content hash. Offsets are character offsets into extracted text, never invented webpage line numbers.
 
-Search results are cached only when at least one result is present. An empty response is retried once with a deterministic entity-focused query and remains uncached so a transient engine CAPTCHA or rate limit cannot poison later research modes. In strict mode, cache misses are serialized and spaced before reaching SearXNG so expanded queries do not exhaust several engines through one Tor exit. Deep query and round budgets scale with the requested source count and stop when discovery has enough primary-source candidates. Retrieved passages are reranked globally and selected with source-diversity and near-duplicate penalties before evidence IDs are assigned.
+The exact user query is always searched first for up to 10 results. Safe-normalized results retain SearXNG order and are stored as unverified `search_snippets` with their original rank; only canonical-URL duplicates are removed. This immutable floor is scanned for prompt injection, with high-risk title/snippet text redacted before return, and survives even if every robots check, page fetch, or extraction fails. Expanded queries are additive and cannot evict exact-query snippets.
+
+Search results are cached only when at least one result is present. Exact-query misses are not silently replaced; expanded-query misses may be retried once with a deterministic entity-focused query and remain uncached so a transient engine CAPTCHA or rate limit cannot poison later research modes. In strict mode, cache misses are serialized and spaced before reaching SearXNG so expanded queries do not exhaust several engines through one Tor exit. Deep query and round budgets scale with the requested source count and stop when discovery has enough primary-source candidates. Fetch selection always retains the highest-ranked candidate and applies primary-source/domain diversity only within a relevance threshold. Retrieved passages are reranked globally and low-value candidates are removed before source-diverse evidence IDs are assigned.
+
+SearXNG keeps several independent general engines enabled and adds the `it`, `science`, or `news` vertical only when deterministic query signals call for it. Engine suspension windows are bounded so a rotated Tor exit can recover without retaining a day-long CAPTCHA/access-denied state; requests remain paced in the app and there is no CAPTCHA bypass.
 
 ## Request flow
 
-1. Validate MCP input and choose a deterministic budget.
-2. Decompose/expand the question without an LLM callback.
-3. Search variants concurrently through internal SearXNG.
-4. Normalize URLs, remove tracking parameters, deduplicate, and pre-rank.
+1. Validate MCP input and choose a quality-first automatic or explicit budget.
+2. Search the exact question for the immutable top-10 snippet floor.
+3. Decompose/expand the question without an LLM callback and search variants through paced internal SearXNG.
+4. Normalize URLs, remove tracking parameters, deduplicate expansions, and pre-rank.
 5. Fetch selected pages through `tor-fetch`, validating every redirect.
 6. Extract metadata/main text; hash and semantically chunk it.
 7. Rank passages, quarantine injection-like instructions, build citations.
 8. Report coverage, primary-source presence, gaps, failures, and contradictions.
-9. Return structured JSON. Final prose synthesis remains the calling model's job.
+9. Return structured JSON containing both unverified snippets and verified extracted evidence. Final prose synthesis remains the calling model's job.

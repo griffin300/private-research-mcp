@@ -4,8 +4,9 @@ from app.evidence.citations import make_evidence
 from app.evidence.contradictions import detect_contradictions
 from app.evidence.coverage import analyze_coverage
 from app.evidence.ledger import build_evidence
-from app.models import EvidenceRecord, Passage, SourceRecord
-from app.ranking.lexical import rank_passages
+from app.models import EvidenceRecord, Passage, SearchResult, SourceRecord
+from app.orchestration.pipeline import _select_fetch_candidates
+from app.ranking.lexical import meaningful_tokens, rank_passages
 
 
 def source(identifier: str, domain: str = "example.com") -> SourceRecord:
@@ -98,3 +99,68 @@ def test_global_evidence_ranking_keeps_distinct_supporting_sources() -> None:
     ]
     evidence = build_evidence(ranked, 2, query="production transport recommendation")
     assert {item.source_id for item in evidence} == {"src_001", "src_002"}
+
+
+def test_coverage_requires_both_terms_for_a_short_topic() -> None:
+    evidence = [
+        make_evidence(
+            source("src_001"),
+            Passage(text="MCP is mentioned alone.", start_offset=0, end_offset=23),
+            1,
+        )
+    ]
+    report = analyze_coverage(["MCP transport"], evidence, [source("src_001")])
+    assert report.missing_topics == ["MCP transport"]
+
+
+def test_generic_proximity_ranking_prefers_related_query_terms() -> None:
+    passages = [
+        Passage(
+            text="Production guidance appears here. " + "filler " * 80 + "Transport is elsewhere.",
+            start_offset=0,
+            end_offset=600,
+        ),
+        Passage(
+            text="The production transport recommendation is Streamable HTTP.",
+            start_offset=601,
+            end_offset=660,
+        ),
+    ]
+    ranked = rank_passages("production transport recommendation", passages)
+    assert ranked[0].text.startswith("The production transport")
+
+
+def test_lexical_normalization_matches_common_inflections() -> None:
+    assert meaningful_tokens("recommended transports policies") == [
+        "recommend",
+        "transport",
+        "policy",
+    ]
+
+
+def test_fetch_selection_keeps_top_result_and_rejects_irrelevant_primary() -> None:
+    candidates = [
+        SearchResult(
+            url="https://relevant.example/result",
+            canonical_url="https://relevant.example/result",
+            title="Top result",
+            domain="relevant.example",
+            preliminary_score=1.0,
+        ),
+        SearchResult(
+            url="https://weak.example/docs/page",
+            canonical_url="https://weak.example/docs/page",
+            title="Irrelevant docs",
+            domain="weak.example",
+            preliminary_score=0.01,
+        ),
+        SearchResult(
+            url="https://second.example/result",
+            canonical_url="https://second.example/result",
+            title="Relevant second result",
+            domain="second.example",
+            preliminary_score=0.8,
+        ),
+    ]
+    assert _select_fetch_candidates(candidates, 1) == [candidates[0]]
+    assert _select_fetch_candidates(candidates, 2) == [candidates[0], candidates[2]]

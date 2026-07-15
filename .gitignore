@@ -14,3 +14,6 @@ models/*
 !models/.gitkeep
 benchmarks/results/*
 !benchmarks/results/.gitkeep
+!benchmarks/results/latest-answer-quality-report.md
+!benchmarks/results/latest-synthesized-answer-report.md
+!benchmarks/results/latest-external-benchmark.md

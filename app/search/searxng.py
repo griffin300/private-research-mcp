@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -26,7 +27,7 @@ class SearxngBackend:
             "format": "json",
             "language": language,
             "safesearch": 1,
-            "categories": "general",
+            "categories": _categories_for_query(query),
         }
         if recency_days is not None:
             params["time_range"] = (
@@ -60,6 +61,7 @@ class SearxngBackend:
             url=str(item.get("url", "")),
             title=str(item.get("title", "Untitled")),
             snippet=str(item.get("content", "")),
+            rank=index + 1,
             engine=engine,
             engines=[str(value) for value in engines] or [engine],
             published_at=parsed_date,
@@ -78,3 +80,27 @@ class SearxngBackend:
             }
         except httpx.HTTPError as exc:
             return {"status": "unhealthy", "error": type(exc).__name__}
+
+
+def _categories_for_query(query: str) -> str:
+    categories = ["general"]
+    if re.search(
+        r"\b(?:api|code|curl|database|docker|git|http|https|java|javascript|linux|mcp|"
+        r"package|protocol|python|release|rfc|sdk|software|sql|typescript|version|windows)\b",
+        query,
+        re.IGNORECASE,
+    ):
+        categories.append("it")
+    if re.search(
+        r"\b(?:arxiv|clinical|doi|experiment|journal|paper|peer-reviewed|research|science|study)\b",
+        query,
+        re.IGNORECASE,
+    ):
+        categories.append("science")
+    if re.search(
+        r"\b(?:breaking|election|headline|news|today|this week)\b",
+        query,
+        re.IGNORECASE,
+    ):
+        categories.append("news")
+    return ",".join(categories)
