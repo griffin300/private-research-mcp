@@ -46,8 +46,8 @@
     "category": "networking",
     "question": "In curl proxy URLs, how does socks5h differ from socks5 for hostname resolution?",
     "assertions": [
-      {"label": "socks5h resolves through the proxy", "patterns": ["socks5h.{0,100}(?:proxy|remote).{0,80}resolv", "hostname.{0,80}resolved.{0,80}(?:proxy|socks5h)", "proxy.{0,80}resolv.{0,80}hostname"]},
-      {"label": "socks5 resolves locally", "patterns": ["socks5.{0,100}(?:local|client).{0,80}resolv", "(?:local|client).{0,80}resolv.{0,80}socks5"]}
+      {"label": "socks5h resolves through the proxy", "patterns": ["socks5h.{0,100}(?:proxy|remote).{0,80}resolv", "socks5h.{0,80}resolv.{0,80}(?:proxy|remote)", "socks5h.{0,100}(?:send|pass).{0,80}hostname.{0,80}proxy", "hostname.{0,80}resolved.{0,80}(?:proxy|socks5h)", "proxy.{0,80}resolv.{0,80}hostname"]},
+      {"label": "socks5 resolves locally", "patterns": ["socks5.{0,100}(?:local|client).{0,80}resolv", "socks5.{0,80}resolv.{0,80}(?:local|client)", "(?:local|client).{0,80}resolv.{0,80}socks5"]}
     ],
     "preferred_domains": ["curl.se"]
   },

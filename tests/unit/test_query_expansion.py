@@ -21,6 +21,13 @@ def test_error_message_adds_exact_phrase_query() -> None:
     assert any("issue tracker" in query and '"' in query for query in plan.queries)
 
 
+def test_historical_release_does_not_get_current_release_notes() -> None:
+    plan = HeuristicQueryPlanner().plan("On what date was Python 3.12.0 released?", 6)
+    assert not plan.time_sensitive
+    assert not any("current release notes" in query for query in plan.queries)
+    assert any("Python 3.12.0 released" in query for query in plan.queries)
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_enhanced_planner_uses_only_configured_local_endpoint() -> None:

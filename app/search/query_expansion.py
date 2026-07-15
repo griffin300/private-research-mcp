@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 _STOP = {
     "a",
     "an",
     "and",
+    "according",
     "are",
+    "does",
+    "differ",
     "for",
     "from",
     "how",
@@ -19,6 +23,7 @@ _STOP = {
     "the",
     "to",
     "what",
+    "was",
     "when",
     "where",
     "which",
@@ -49,19 +54,27 @@ class HeuristicQueryPlanner:
         tokens = re.findall(r"[A-Za-z0-9_.+#-]+", compact)
         entities = [t for t in tokens if t.lower() not in _STOP and len(t) > 2]
         topics = self._topics(compact, entities)
+        current_year = datetime.now(UTC).year
         time_sensitive = bool(
-            re.search(
-                r"\b(latest|current|today|recent|version|release|price|202[4-9])\b", compact, re.I
-            )
+            re.search(r"\b(latest|current|today|recent|price|as of|right now)\b", compact, re.I)
+            or re.search(rf"\b{current_year}\b", compact)
         )
+        focused = " ".join(entities[:12])
         candidates = [compact]
-        candidates.extend(f"{topic} official documentation" for topic in topics[:3])
+        if focused and focused.casefold() != compact.casefold():
+            candidates.append(focused)
+        candidates.append(f"{focused or compact} official documentation")
+        candidates.extend(f"{topic} official documentation" for topic in topics[:2])
         if re.search(r"\b(error|exception|failed|traceback|code\s+\d+)\b", compact, re.I):
             candidates.append(f'"{compact}" issue tracker')
         if re.search(r"\b(compare|versus|vs\.?|difference|better)\b", compact, re.I):
             candidates.extend(f"{topic} specification benchmark" for topic in topics[:2])
         if time_sensitive:
-            candidates.append(f"{compact} release notes 2026")
+            candidates.append(f"{focused or compact} current release notes {current_year}")
+        elif re.search(r"\b(?:release|released)\b", compact, re.I) and re.search(
+            r"\b\d+\.\d+(?:\.\d+)?\b", compact
+        ):
+            candidates.append(f"{focused or compact} official release page")
         expanded = [
             f"{compact} {_ABBREVIATIONS[t.lower()]}"
             for t in entities

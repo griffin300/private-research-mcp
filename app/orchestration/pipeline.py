@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from collections.abc import Iterable
@@ -77,6 +78,8 @@ class ResearchPipeline:
             else None
         )
         self.reranker = HybridReranker()
+        self._search_lock = asyncio.Lock()
+        self._last_search_at = 0.0
 
     async def search_web(
         self,
@@ -93,23 +96,32 @@ class ResearchPipeline:
         started = time.monotonic()
         request_id = uuid.uuid4().hex[:16]
         budget = budget_for(mode, self.settings)
+        query_limit = (
+            min(budget.queries, max(3, max_sources * 2))
+            if mode == SearchMode.DEEP
+            else budget.queries
+        )
         warnings: list[str] = []
-        plan = self.planner.plan(query, budget.queries)
+        plan = self.planner.plan(query, query_limit)
         if self.enhanced_planner is not None:
             try:
-                plan = await self.enhanced_planner.plan(query, plan, budget.queries)
+                plan = await self.enhanced_planner.plan(query, plan, query_limit)
             except EnhancedPlannerError as exc:
                 warnings.append(
                     f"Local enhanced planner failed ({exc}); deterministic planning was used."
                 )
-        rounds_limit = min(budget.rounds, rounds_override or budget.rounds)
+        rounds_limit = min(
+            budget.rounds,
+            rounds_override or budget.rounds,
+            max(1, (query_limit + 1) // 2),
+        )
         raw: list[SearchResult] = []
         failures: list[dict[str, str]] = []
         rounds = 0
         queries_used = 0
-        queries_per_round = max(2, (budget.queries + rounds_limit - 1) // rounds_limit)
+        queries_per_round = max(2, (query_limit + rounds_limit - 1) // rounds_limit)
         for round_number in range(rounds_limit):
-            remaining_queries = budget.queries - queries_used
+            remaining_queries = query_limit - queries_used
             if remaining_queries <= 0:
                 break
             candidates_for_round = (
@@ -137,9 +149,11 @@ class ResearchPipeline:
                 for item in normalized
             )
             weak_discovery = len(normalized) < budget.pages * 2 or not primary_candidate
-            more_rounds = round_number + 1 < rounds_limit and queries_used < budget.queries
+            more_rounds = round_number + 1 < rounds_limit and queries_used < query_limit
             if mode == SearchMode.DEEP and more_rounds:
-                continue
+                strong_discovery = len(normalized) >= max(6, max_sources * 2) and primary_candidate
+                if round_number == 0 or not strong_discovery:
+                    continue
             if mode == SearchMode.STANDARD and weak_discovery and more_rounds:
                 continue
             if not more_rounds or not weak_discovery:
@@ -158,7 +172,8 @@ class ResearchPipeline:
             browser_budget=budget.browser_pages,
         )
         sources = [source for source, _ in ranked_sources]
-        evidence = build_evidence(ranked_sources, budget.passages)
+        evidence_limit = min(budget.passages, max(8, max_sources * 3))
+        evidence = build_evidence(ranked_sources, evidence_limit, query=query)
         coverage = analyze_coverage(plan.topics or [query], evidence, sources)
         contradictions = detect_contradictions(evidence) if mode == SearchMode.DEEP else []
         if not self.settings.enable_embeddings:
@@ -505,16 +520,42 @@ class ResearchPipeline:
         cached = self.cache.get("search", key)
         if isinstance(cached, list):
             return [SearchResult.model_validate(item) for item in cached]
-        results = await self.backend.search(
+        results = await self._backend_search(
             query, language=language, recency_days=recency_days, limit=limit
         )
-        self._cache_put(
-            "search",
-            key,
-            [result.model_dump(mode="json") for result in results],
-            minutes=30,
-        )
+        if not results:
+            fallback = _fallback_search_query(query)
+            if fallback.casefold() != query.casefold():
+                results = await self._backend_search(
+                    fallback, language=language, recency_days=recency_days, limit=limit
+                )
+        if results:
+            self._cache_put(
+                "search",
+                key,
+                [result.model_dump(mode="json") for result in results],
+                minutes=30,
+            )
         return results
+
+    async def _backend_search(
+        self, query: str, *, language: str, recency_days: int | None, limit: int
+    ) -> list[SearchResult]:
+        interval = (
+            self.settings.search_min_interval_seconds
+            if self.settings.privacy_mode == "strict"
+            else 0.0
+        )
+        async with self._search_lock:
+            remaining = interval - (time.monotonic() - self._last_search_at)
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+            try:
+                return await self.backend.search(
+                    query, language=language, recency_days=recency_days, limit=limit
+                )
+            finally:
+                self._last_search_at = time.monotonic()
 
     async def _fetch_cached(self, url: str) -> FetchResult:
         key = self._page_key(url)
@@ -608,3 +649,33 @@ def _domain_matches(domain: str, patterns: Iterable[str]) -> bool:
         or normalized.endswith(f".{pattern.lower().lstrip('.')}")
         for pattern in patterns
     )
+
+
+def _fallback_search_query(query: str) -> str:
+    tokens = [
+        token
+        for token in re.findall(r"[A-Za-z0-9_.+#-]+", query)
+        if token.casefold()
+        not in {
+            "a",
+            "an",
+            "according",
+            "and",
+            "are",
+            "does",
+            "for",
+            "from",
+            "how",
+            "in",
+            "is",
+            "of",
+            "on",
+            "the",
+            "to",
+            "what",
+            "when",
+            "which",
+            "with",
+        }
+    ]
+    return " ".join(tokens[:16]) or query

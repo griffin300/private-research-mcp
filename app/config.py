@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=20.0, ge=1, le=120)
     max_redirects: int = Field(default=4, ge=0, le=10)
     per_domain_concurrency: int = Field(default=2, ge=1, le=10)
+    search_min_interval_seconds: float = Field(default=1.25, ge=0, le=10)
     quick_queries: int = Field(default=3, ge=1, le=10)
     quick_raw_results: int = Field(default=15, ge=3, le=100)
     quick_pages: int = Field(default=5, ge=1, le=25)

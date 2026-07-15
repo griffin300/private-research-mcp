@@ -8,6 +8,8 @@ SQLite uses WAL plus FTS5. Search responses, pages, evidence, and failure states
 
 Evidence IDs are assigned only after prompt-injection screening. A citation includes its source/evidence IDs; structured records retain URL, title, passage, heading, offsets, retrieval time, and content hash. Offsets are character offsets into extracted text, never invented webpage line numbers.
 
+Search results are cached only when at least one result is present. An empty response is retried once with a deterministic entity-focused query and remains uncached so a transient engine CAPTCHA or rate limit cannot poison later research modes. In strict mode, cache misses are serialized and spaced before reaching SearXNG so expanded queries do not exhaust several engines through one Tor exit. Deep query and round budgets scale with the requested source count and stop when discovery has enough primary-source candidates. Retrieved passages are reranked globally and selected with source-diversity and near-duplicate penalties before evidence IDs are assigned.
+
 ## Request flow
 
 1. Validate MCP input and choose a deterministic budget.

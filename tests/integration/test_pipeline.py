@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -31,6 +32,47 @@ class FakeBackend:
 
     async def health(self) -> dict[str, object]:
         return {"status": "healthy"}
+
+
+class RecoveringBackend(FakeBackend):
+    async def search(
+        self, query: str, *, language: str, recency_days: int | None, limit: int
+    ) -> list[SearchResult]:
+        self.calls += 1
+        if self.calls <= 2:
+            return []
+        return [
+            SearchResult(
+                url="https://example.com/recovered",
+                title="Recovered official result",
+                snippet="Recovered evidence",
+                engine="fixture",
+            )
+        ]
+
+
+class ConcurrentBackend(FakeBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.active = 0
+        self.maximum_active = 0
+
+    async def search(
+        self, query: str, *, language: str, recency_days: int | None, limit: int
+    ) -> list[SearchResult]:
+        self.calls += 1
+        self.active += 1
+        self.maximum_active = max(self.maximum_active, self.active)
+        await asyncio.sleep(0.01)
+        self.active -= 1
+        return [
+            SearchResult(
+                url=f"https://example.com/{query}",
+                title=query,
+                snippet="evidence",
+                engine="fixture",
+            )
+        ]
 
 
 class FakeFetcher:
@@ -122,6 +164,83 @@ async def test_deep_research_executes_multiple_distinct_rounds(tmp_path) -> None
     result = await pipeline.deep_research("MCP transport and privacy", max_search_rounds=3)
     assert result.search_rounds == 3
     assert backend.calls >= 3
+
+
+@pytest.mark.integration
+async def test_deep_query_budget_scales_to_requested_sources(tmp_path) -> None:
+    settings = Settings(privacy_mode="development", database_path=tmp_path / "scaled-deep.db")
+    database = Database(settings.database_path)
+    database.initialize()
+    backend = FakeBackend()
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=backend,
+        fetcher=FakeFetcher(),  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+    result = await pipeline.search_web("MCP transport privacy", mode=SearchMode.DEEP, max_sources=3)
+    assert result.search_rounds == 3
+    assert backend.calls <= 6
+
+
+@pytest.mark.integration
+async def test_empty_search_results_are_retried_instead_of_cached(tmp_path) -> None:
+    settings = Settings(privacy_mode="development", database_path=tmp_path / "empty-cache.db")
+    database = Database(settings.database_path)
+    database.initialize()
+    backend = RecoveringBackend()
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=backend,
+        fetcher=FakeFetcher(),  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+    first = await pipeline._search_cached(
+        "On what date was the historical release?", language="en", recency_days=None, limit=5
+    )
+    second = await pipeline._search_cached(
+        "On what date was the historical release?", language="en", recency_days=None, limit=5
+    )
+    third = await pipeline._search_cached(
+        "On what date was the historical release?", language="en", recency_days=None, limit=5
+    )
+    assert not first
+    assert second
+    assert third
+    assert backend.calls == 3
+
+
+@pytest.mark.integration
+async def test_strict_search_cache_misses_are_serialized(tmp_path) -> None:
+    settings = Settings(
+        privacy_mode="strict",
+        database_path=tmp_path / "serialized-search.db",
+        search_min_interval_seconds=0,
+    )
+    database = Database(settings.database_path)
+    database.initialize()
+    backend = ConcurrentBackend()
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=backend,
+        fetcher=FakeFetcher(),  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+    results, failures = await pipeline._search_round(
+        ["one", "two", "three"], language="en", recency_days=None, limit=3
+    )
+    assert len(results) == 3
+    assert not failures
+    assert backend.maximum_active == 1
 
 
 @pytest.mark.integration

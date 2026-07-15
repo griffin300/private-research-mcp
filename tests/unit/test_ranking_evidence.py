@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from app.evidence.citations import make_evidence
 from app.evidence.contradictions import detect_contradictions
 from app.evidence.coverage import analyze_coverage
+from app.evidence.ledger import build_evidence
 from app.models import EvidenceRecord, Passage, SourceRecord
 from app.ranking.lexical import rank_passages
 
@@ -72,3 +73,28 @@ def test_numeric_contradiction_detection() -> None:
         ),
     ]
     assert detect_contradictions(records)
+
+
+def test_global_evidence_ranking_keeps_distinct_supporting_sources() -> None:
+    duplicate = "MCP transport production recommendation Streamable HTTP exact support"
+    ranked = [
+        (
+            source("src_001", "docs.example.com"),
+            [
+                Passage(text=duplicate, start_offset=0, end_offset=len(duplicate)),
+                Passage(text=duplicate + " repeated", start_offset=70, end_offset=150),
+            ],
+        ),
+        (
+            source("src_002", "spec.example.org"),
+            [
+                Passage(
+                    text="Independent specification confirms the production transport.",
+                    start_offset=0,
+                    end_offset=59,
+                )
+            ],
+        ),
+    ]
+    evidence = build_evidence(ranked, 2, query="production transport recommendation")
+    assert {item.source_id for item in evidence} == {"src_001", "src_002"}

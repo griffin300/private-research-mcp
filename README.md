@@ -4,6 +4,8 @@
 
 Compared with a raw SearXNG MCP wrapper, it adds full-page retrieval, URL/content deduplication, source and passage ranking, freshness handling, coverage analysis, contradiction signals, prompt-injection quarantine, SSRF controls, caching, and evidence-level citations.
 
+Transient empty searches are retried with a simplified query and are never negatively cached. Deep-search work scales to the requested source count, while globally ranked evidence uses source-diversity and duplicate penalties to keep downstream local-model prompts focused.
+
 ## Status
 
 The core, Docker topology, MCP transports, tests, scripts, benchmark harness, and documentation are implemented. The release-blocking Docker privacy suite and live MCP search/read probes passed on the development host. Optional embeddings and browser fallback remain disabled by default.
