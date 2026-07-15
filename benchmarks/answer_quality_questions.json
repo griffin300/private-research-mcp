@@ -1,0 +1,64 @@
+[
+  {
+    "id": "aq01",
+    "category": "protocol_documentation",
+    "question": "According to the official MCP Python SDK, which transport is recommended for production deployments?",
+    "assertions": [
+      {"label": "Streamable HTTP", "patterns": ["streamable\\s+http"]}
+    ],
+    "preferred_domains": ["github.com", "modelcontextprotocol.io"]
+  },
+  {
+    "id": "aq02",
+    "category": "standards",
+    "question": "Which RFC defines the private IPv4 address blocks, and what are the three blocks?",
+    "assertions": [
+      {"label": "RFC 1918", "patterns": ["\\brfc\\s*1918\\b"]},
+      {"label": "10.0.0.0/8", "patterns": ["10\\.0\\.0\\.0\\s*/\\s*8", "\\b10/8\\b", "10\\.0\\.0\\.0.{0,60}10\\.255\\.255\\.255"]},
+      {"label": "172.16.0.0/12", "patterns": ["172\\.16\\.0\\.0\\s*/\\s*12", "172\\.16/12", "172\\.16\\.0\\.0.{0,60}172\\.31\\.255\\.255"]},
+      {"label": "192.168.0.0/16", "patterns": ["192\\.168\\.0\\.0\\s*/\\s*16", "192\\.168/16", "192\\.168\\.0\\.0.{0,60}192\\.168\\.255\\.255"]}
+    ],
+    "preferred_domains": ["rfc-editor.org", "ietf.org"]
+  },
+  {
+    "id": "aq03",
+    "category": "http_standard",
+    "question": "What does HTTP status code 429 mean?",
+    "assertions": [
+      {"label": "status 429", "patterns": ["\\b429\\b"]},
+      {"label": "Too Many Requests", "patterns": ["too\\s+many\\s+requests"]}
+    ],
+    "preferred_domains": ["rfc-editor.org", "ietf.org"]
+  },
+  {
+    "id": "aq04",
+    "category": "database",
+    "question": "In SQLite, what does WAL stand for, and what reader/writer concurrency does WAL mode permit?",
+    "assertions": [
+      {"label": "write-ahead log", "patterns": ["write[ -]ahead\\s+log"]},
+      {"label": "readers and writer can proceed concurrently", "patterns": ["reader[s]?.{0,80}(?:simultaneous|concurrent|same time).{0,80}writer", "reader[s]?.{0,80}(?:do not|does not|don't).{0,30}block.{0,30}writer", "writer.{0,80}(?:simultaneous|concurrent|same time).{0,80}reader"]},
+      {"label": "only one writer at a time", "patterns": ["one\\s+writer\\s+at\\s+a\\s+time", "only\\s+one\\s+writer", "(?:a|one)\\s+single\\s+writer", "single\\s+writer"]}
+    ],
+    "preferred_domains": ["sqlite.org"]
+  },
+  {
+    "id": "aq05",
+    "category": "networking",
+    "question": "In curl proxy URLs, how does socks5h differ from socks5 for hostname resolution?",
+    "assertions": [
+      {"label": "socks5h resolves through the proxy", "patterns": ["socks5h.{0,100}(?:proxy|remote).{0,80}resolv", "hostname.{0,80}resolved.{0,80}(?:proxy|socks5h)", "proxy.{0,80}resolv.{0,80}hostname"]},
+      {"label": "socks5 resolves locally", "patterns": ["socks5.{0,100}(?:local|client).{0,80}resolv", "(?:local|client).{0,80}resolv.{0,80}socks5"]}
+    ],
+    "preferred_domains": ["curl.se"]
+  },
+  {
+    "id": "aq06",
+    "category": "release_history",
+    "question": "On what date was Python 3.12.0 released?",
+    "assertions": [
+      {"label": "Python 3.12.0", "patterns": ["python\\s+3\\.12\\.0", "3\\.12\\.0"]},
+      {"label": "October 2, 2023", "patterns": ["october\\s+2(?:nd)?,?\\s+2023", "2(?:nd)?\\s+october\\s+2023", "2023-10-02"]}
+    ],
+    "preferred_domains": ["python.org", "docs.python.org", "peps.python.org"]
+  }
+]

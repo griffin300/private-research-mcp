@@ -132,6 +132,8 @@ The second command is intentionally not part of `stop.ps1`.
 
 `.\scripts\run-benchmark.ps1` evaluates 50 questions against raw SearXNG, quick, standard, and deep modes. It writes `benchmarks/results/latest-report.md`, raw JSON, and a human-review template. It does not invent answer-quality scores.
 
+`.\scripts\run-answer-quality.ps1` runs the smaller hand-authored gold-fact suite, then uses the currently loaded local LM Studio model to synthesize cited answers when its API is available. It reports retrieval readiness and deterministic answer-level fact/citation metrics separately; see `docs/EVALUATION.md` for the declared formulas and limitations.
+
 The dashboard at `http://127.0.0.1:8088/dashboard` shows component health, cache activity, storage, recent opaque request metrics, coverage, and the last recorded privacy-suite result. It never displays raw queries by default.
 
 ## Troubleshooting
