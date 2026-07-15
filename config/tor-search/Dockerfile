@@ -6,4 +6,3 @@ COPY torrc /etc/tor/torrc
 USER debian-tor
 HEALTHCHECK --interval=10s --timeout=3s --retries=12 CMD ["nc", "-z", "127.0.0.1", "9050"]
 CMD ["tor", "-f", "/etc/tor/torrc"]
-

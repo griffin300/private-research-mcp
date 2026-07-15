@@ -8,6 +8,8 @@ Compared with a raw SearXNG MCP wrapper, it adds full-page retrieval, URL/conten
 
 The core, Docker topology, MCP transports, tests, scripts, benchmark harness, and documentation are implemented. The release-blocking Docker privacy suite and live MCP search/read probes passed on the development host. Optional embeddings and browser fallback remain disabled by default.
 
+Known limits: the lexical BM25-like ranker is the active production path; FastEmbed/cross-encoder model provisioning and hybrid-score integration are not complete. The 50-question benchmark framework is complete, but only a one-question four-mode smoke run was executed during this build. The optional browser image and Tor route were live-tested but remain opt-in.
+
 ## Architecture
 
 ```text

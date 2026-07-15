@@ -10,4 +10,3 @@ if (-not $WithEmbeddings -and -not $WithReranker) {
     exit 0
 }
 throw 'Model download manifest is intentionally disabled until exact upstream revisions and hashes are reviewed; runtime will not download models.'
-

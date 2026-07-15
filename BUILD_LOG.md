@@ -56,3 +56,10 @@
 - Retrieval honors available `robots.txt` rules through the fetch Tor route without weakening privacy when a robots file is unavailable.
 - Request metrics, cache hit rate, and the last privacy-suite result are visible on the localhost dashboard without storing raw queries.
 - Local FastEmbed/cross-encoder model provisioning remains intentionally incomplete: lexical ranking is production-functional, but the download manifest is disabled until exact model revisions and file hashes are reviewed.
+
+## 2026-07-14 — Optional browser verification and final regression
+
+- Corrected the Playwright image so Chromium is installed at `/ms-playwright` and readable by the non-root UID 10001 service account.
+- Built and started the optional browser profile, confirmed its only network is `internal_private`, blocked its direct public IP and DNS access, and completed a real Chromium render reported as Tor through `tor-fetch`.
+- The final local quality run passed Ruff formatting/linting, strict Mypy for 60 source files, and 44 Pytest unit/integration/security/privacy-static tests.
+- The final live privacy run, with the browser profile active, passed every check including browser isolation, distinct Tor exits, fail-closed transport shutdown, and recovery.

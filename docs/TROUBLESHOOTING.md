@@ -31,4 +31,3 @@ Stop the stack before copying the volume. Expired rows are safe to remove; unrel
 ## Privacy failure
 
 Do not use the stack for sensitive research until `.\scripts\privacy-test.ps1` passes. Inspect container networks and port mappings. Never solve a failure by connecting app/SearXNG/browser directly to an egress network.
-
