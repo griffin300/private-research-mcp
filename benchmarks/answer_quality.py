@@ -190,10 +190,12 @@ async def evaluate(
     for question_index, item in enumerate(questions):
         # A missing shared snapshot invalidates the pair, so fail loudly instead of
         # letting expansion make the hybrid appear to win against an empty baseline.
+        snapshot_started = time.monotonic()
         exact_snapshot = await asyncio.wait_for(
             runtime.pipeline.search_exact(str(item["question"]), limit=10),
             timeout=run_timeout,
         )
+        snapshot_elapsed = round(time.monotonic() - snapshot_started, 3)
         if not exact_snapshot:
             raise RuntimeError(f"shared exact-query snapshot is empty for {item['id']}")
         for repetition in range(1, repeats + 1):
@@ -239,7 +241,9 @@ async def evaluate(
                         "question": item["question"],
                         "mode": mode,
                         "repeat": repetition,
+                        "snapshot_elapsed": snapshot_elapsed,
                         "elapsed": elapsed,
+                        "end_to_end_elapsed": round(snapshot_elapsed + elapsed, 3),
                         "error": error,
                         "metrics": metrics,
                         "result": result,
@@ -302,6 +306,7 @@ def _write_outputs(
                     _mean(mode_runs, "cited_fact_recall"),
                     _mean(mode_runs, "answer_readiness_score", digits=2),
                     f"{statistics.mean(float(run['elapsed']) for run in mode_runs):.2f}",
+                    f"{statistics.mean(float(run.get('end_to_end_elapsed', run['elapsed'])) for run in mode_runs):.2f}",
                     str(sum(bool(run["error"]) for run in mode_runs)),
                 )
             )
@@ -313,27 +318,29 @@ def _write_outputs(
         f"{run['metrics']['preferred_source_hit']:.0f} | "
         f"{run['metrics']['citation_integrity']:.2f} | "
         f"{run['metrics']['context_traceability']:.2f} | "
-        f"{run['metrics']['answer_readiness_score']:.2f} | {run['elapsed']:.2f} | {run['error'] or '—'} |"
+        f"{run['metrics']['answer_readiness_score']:.2f} | {run['elapsed']:.2f} | "
+        f"{float(run.get('end_to_end_elapsed', run['elapsed'])):.2f} | "
+        f"{run['error'] or '—'} |"
         for run in runs
     ]
     report = f"""# Paired gold-fact answer-quality benchmark
 
 Questions: {question_count}. Repetitions: {repeats}. Seed: {seed}. Headline systems: raw SearXNG and quality-first adaptive hybrid.
 
-This is a deterministic **answer-readiness** benchmark, not an LLM-as-judge score. The harness freezes one exact-query top-10 snapshot per question and supplies it to both systems; the hybrid adds query expansion, safe page extraction, source selection, and evidence ranking. Run order alternates to reduce order bias. Each question has hand-authored expected facts expressed as transparent regex alternatives plus preferred primary-source domains. Latency starts after the shared snapshot and is diagnostic only.
+This is a deterministic **answer-readiness** benchmark, not an LLM-as-judge score. The harness freezes one exact-query top-10 snapshot per question and supplies it to both systems; the hybrid adds query expansion, safe page extraction, source selection, and evidence ranking. Run order alternates to reduce order bias. Each question has hand-authored expected facts expressed as transparent regex alternatives plus preferred primary-source domains. Post-snapshot latency isolates each system's added work; end-to-end retrieval latency adds the measured shared SearXNG snapshot time back to both systems.
 
 The composite is: 55% gold-fact recall, 15% fact-bearing-context precision, 15% preferred-source hit, and 15% context traceability. Extracted-evidence citation integrity remains a separate diagnostic and validates source IDs, exact citation rendering, nonempty passage text, and offsets; it does not claim semantic entailment. When the local API is available, final answer synthesis is scored separately by `benchmarks.synthesize_answers`.
 
 ## Aggregate
 
-| Mode | Fact recall | Fact-context precision | Preferred source | Evidence citation integrity | Context traceability | Cited fact recall | Readiness /100 | Mean latency s | Errors |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Mode | Fact recall | Fact-context precision | Preferred source | Evidence citation integrity | Context traceability | Cited fact recall | Readiness /100 | Post-snapshot s | End-to-end retrieval s | Errors |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 {chr(10).join(aggregate_rows)}
 
 ## Per question
 
-| Question | Mode | Fact recall | Fact-context precision | Preferred source | Evidence citation integrity | Context traceability | Readiness /100 | Latency s | Error |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| Question | Mode | Fact recall | Fact-context precision | Preferred source | Evidence citation integrity | Context traceability | Readiness /100 | Post-snapshot s | End-to-end retrieval s | Error |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
 {chr(10).join(detail_rows)}
 
 Full assertion hits, excerpts, source metadata, and failures are written to the local generated artifact `latest-answer-quality-raw.json`, which is intentionally ignored by Git.
@@ -361,7 +368,7 @@ def _preferred_domain(domain: str, preferred: list[str]) -> bool:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run deterministic gold-fact answer scoring")
     parser.add_argument("--limit", type=int)
-    parser.add_argument("--run-timeout", type=float, default=300.0)
+    parser.add_argument("--run-timeout", type=float, default=840.0)
     parser.add_argument("--max-sources", type=int, default=8)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)

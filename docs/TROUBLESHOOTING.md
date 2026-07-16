@@ -16,7 +16,7 @@ docker compose logs --tail 200 app tor-search tor-fetch
 
 Check `search_status`. Search proxy and SearXNG failures are distinct. SearXNG container logs are deliberately disabled because engine errors can include query URLs. Engine CAPTCHA/rate-limit failures are expected occasionally; the pipeline rotates queries but does not bypass CAPTCHAs. If Tor is down, failure is intentional and direct egress is never tried.
 
-LM Studio error `-32001` means its MCP client stopped waiting before the research server finished. Use the canonical `http://127.0.0.1:8088/mcp/` URL and set `"timeout": 300000` on the `private-research` entry in `mcp.json`. This is a per-tool timeout in milliseconds; it does not weaken the app's bounded per-network-operation timeouts.
+LM Studio error `-32001` means its MCP client stopped waiting before the research server finished. Use the canonical `http://127.0.0.1:8088/mcp/` URL and set `"timeout": 900000` on the `private-research` entry in `mcp.json`. This is a per-tool timeout in milliseconds; it does not weaken the 30-second per-I/O-attempt limit, the 60-second retried page-fetch bound, the separate 15-second robots wrapper, or the app's 90/240/720-second quick/standard/deep deadlines. At an app deadline, pending work is canceled and completed exact results/evidence are returned with a warning.
 
 ## Fetch/extraction failures
 

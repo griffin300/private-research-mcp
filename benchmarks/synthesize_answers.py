@@ -313,6 +313,7 @@ def _write_report(runs: list[dict[str, Any]], path: Path, model: str) -> None:
                     if available_runs
                     else "0.00",
                     f"{statistics.mean(float(run['synthesis']['elapsed']) for run in mode_runs):.2f}",
+                    f"{statistics.mean(float(run.get('end_to_end_elapsed', run.get('elapsed', 0.0))) + float(run['synthesis']['elapsed']) for run in mode_runs):.2f}",
                     str(sum(bool(run["synthesis"]["error"]) for run in mode_runs)),
                 )
             )
@@ -325,7 +326,9 @@ def _write_report(runs: list[dict[str, Any]], path: Path, model: str) -> None:
         f"{run['synthesis']['metrics']['citation_precision']:.2f} | "
         f"{run['synthesis']['metrics']['claim_citation_coverage']:.2f} | "
         f"{run['synthesis']['metrics']['answer_quality_score']:.2f} | "
-        f"{run['synthesis']['elapsed']:.2f} | {run['synthesis']['error'] or '—'} |"
+        f"{run['synthesis']['elapsed']:.2f} | "
+        f"{float(run.get('end_to_end_elapsed', run.get('elapsed', 0.0))) + float(run['synthesis']['elapsed']):.2f} | "
+        f"{run['synthesis']['error'] or '—'} |"
         for run in runs
     ]
     question_count = len({str(run["question_id"]) for run in runs})
@@ -338,14 +341,14 @@ The deterministic composite is 55% gold-fact recall, 20% gold facts sharing a cl
 
 ## Aggregate
 
-| Mode | Answer fact recall | Grounded fact recall | Citation precision | Claim citation coverage | Availability | End-to-end quality /100 | Quality when available /100 | Mean synthesis s | Errors |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Mode | Answer fact recall | Grounded fact recall | Citation precision | Claim citation coverage | Availability | End-to-end quality /100 | Quality when available /100 | Mean synthesis s | Total pipeline s | Errors |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 {chr(10).join(aggregate_rows)}
 
 ## Per question
 
-| Question | Mode | Answer fact recall | Grounded fact recall | Citation precision | Claim citation coverage | Quality /100 | Synthesis s | Error |
-|---|---|---:|---:|---:|---:|---:|---:|---|
+| Question | Mode | Answer fact recall | Grounded fact recall | Citation precision | Claim citation coverage | Quality /100 | Synthesis s | Total pipeline s | Error |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
 {chr(10).join(detail_rows)}
 
 Full generated answers, assertions, claim units, citations, retrieval packages, and errors are written to the local generated artifact `latest-synthesized-answers.json`, which is intentionally ignored by Git.

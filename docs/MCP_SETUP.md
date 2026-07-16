@@ -15,7 +15,7 @@ In LM Studio 0.3.17+, open **Program → Install → Edit mcp.json** and merge:
   "mcpServers": {
     "private-research": {
       "url": "http://127.0.0.1:8088/mcp/",
-      "timeout": 300000
+      "timeout": 900000
     }
   }
 }
@@ -84,7 +84,7 @@ LM Studio 0.4.0+ can expose configured `mcp.json` servers to API clients. Enable
 ## Troubleshooting
 
 - Connection refused: run `Invoke-RestMethod http://127.0.0.1:8088/health`.
-- Request timed out (`-32001`): confirm the server entry has `"timeout": 300000`; quality-first deep research can exceed LM Studio's shorter default tool deadline.
+- Request timed out (`-32001`): confirm the server entry has `"timeout": 900000`; the app returns completed partial research at its shorter mode-specific deadline instead of leaving orphaned work running.
 - 404 or redirect trouble: use the canonical URL `http://127.0.0.1:8088/mcp/`.
 - Tools absent: reload `mcp.json` and ensure the JSON is nested under `mcpServers`.
 - Calls fail but tools list: run `search_status`, then inspect `docker compose logs app tor-search tor-fetch`. SearXNG container logs are deliberately disabled to prevent engine errors from recording query URLs.

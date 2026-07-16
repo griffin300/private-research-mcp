@@ -70,7 +70,7 @@ Common commands:
   "mcpServers": {
     "private-research": {
       "url": "http://127.0.0.1:8088/mcp/",
-      "timeout": 300000
+      "timeout": 900000
     }
   }
 }
@@ -94,7 +94,7 @@ Example arguments:
 {"query":"What changed in Python MCP SDK 1.28?","mode":"auto","max_sources":8,"recency_days":90,"include_domains":["github.com"],"exclude_domains":[],"language":"en"}
 ```
 
-Every mode first preserves up to 10 exact-query results in SearXNG order. Quick then uses up to 2 additional queries/5 pages/10 passages. Standard uses up to 5 additional queries/10 pages/20 passages and a gap round. Deep uses up to 14 additional queries/25 pages/40 passages and contradiction analysis. `auto` selects at least standard and escalates comparisons, analysis, current information, source requests, conflicts, and architecture questions to deep. Query, result, page, passage, round, and browser budgets are bounded settings exposed as `PRM_QUICK_*`, `PRM_STANDARD_*`, and `PRM_DEEP_*` variables.
+Every ordinary question first preserves up to 10 exact-query results in SearXNG order. An explicit machine-style batch (JSON array, labeled list, semicolon list, or several independent questions) is repaired into up to six facets, further bounded by the selected mode's query budget, with facet-exact results interleaved inside one shared search/fetch budget. Each facet's exact rank-one source is tried first; failed, duplicate, injected, or irrelevant pages are adaptively replaced for uncovered facets without exceeding the original page-attempt budget. Quick then uses up to 2 additional queries/5 pages/10 passages. Standard uses up to 5 additional queries/10 pages/20 passages and a gap round. Deep uses up to 14 additional queries/25 pages/40 passages and contradiction analysis. `auto` selects at least standard and escalates comparisons, analysis, current information, source requests, conflicts, and architecture questions to deep. Query, result, page, passage, round, browser, and wall-clock budgets are bounded settings exposed as `PRM_QUICK_*`, `PRM_STANDARD_*`, and `PRM_DEEP_*` variables.
 
 ## Configuration
 
@@ -112,7 +112,7 @@ PRM_ENABLE_BROWSER=false
 
 Strict mode refuses missing/shared proxies and never retries directly. `development` mode must be explicit and is not used by Docker Compose. An existing SearXNG can be selected with `PRM_SEARXNG_BASE_URL`, but it must still be reachable within the privacy topology for strict deployment.
 
-Individual network operations have a 30-second timeout because the quality-first configuration prefers waiting for useful Tor-routed sources over returning early. A deep request can contain several such operations, so the LM Studio MCP entry uses a five-minute per-tool timeout. Both remain bounded.
+Each page I/O attempt has a 30-second timeout because the quality-first configuration prefers waiting for useful Tor-routed sources over returning early; one transient retry gives a logical page fetch a 60-second total bound. Robots checks use a separate 15-second wrapper, and deterministic failures are not retried. Quick/standard/deep requests have 90/240/720-second server deadlines and return completed exact results/evidence if a pathological tail reaches the bound. The LM Studio entry uses a 15-minute per-tool timeout as an outer backstop.
 
 The optional enhanced planner accepts only a separate loopback/private/Docker-internal OpenAI-compatible endpoint. It falls back to deterministic planning on failure and rejects reuse of the primary LM Studio endpoint.
 

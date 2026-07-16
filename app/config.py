@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     allow_private_destinations: bool = False
     max_response_bytes: int = Field(default=5 * 1024 * 1024, ge=64 * 1024, le=50 * 1024 * 1024)
     request_timeout_seconds: float = Field(default=30.0, ge=1, le=120)
+    robots_timeout_seconds: float = Field(default=15.0, ge=1, le=60)
     max_redirects: int = Field(default=4, ge=0, le=10)
     per_domain_concurrency: int = Field(default=2, ge=1, le=10)
     search_min_interval_seconds: float = Field(default=1.25, ge=0, le=10)
@@ -84,6 +85,9 @@ class Settings(BaseSettings):
     deep_passages: int = Field(default=40, ge=1, le=150)
     deep_rounds: int = Field(default=4, ge=1, le=6)
     deep_browser_pages: int = Field(default=3, ge=0, le=15)
+    quick_deadline_seconds: float = Field(default=90.0, ge=30, le=1800)
+    standard_deadline_seconds: float = Field(default=240.0, ge=30, le=1800)
+    deep_deadline_seconds: float = Field(default=720.0, ge=30, le=1800)
 
     @model_validator(mode="after")
     def validate_security_boundaries(self) -> Settings:

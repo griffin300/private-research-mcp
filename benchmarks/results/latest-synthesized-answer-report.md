@@ -6,50 +6,50 @@ The deterministic composite is 55% gold-fact recall, 20% gold facts sharing a cl
 
 ## Aggregate
 
-| Mode | Answer fact recall | Grounded fact recall | Citation precision | Claim citation coverage | Availability | End-to-end quality /100 | Quality when available /100 | Mean synthesis s | Errors |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| raw_searxng | 0.6389 | 0.6389 | 0.9028 | 0.8278 | 1.0000 | 61.60 | 61.60 | 5.02 | 0 |
-| adaptive_hybrid | 1.0000 | 1.0000 | 1.0000 | 0.9482 | 1.0000 | 99.48 | 99.48 | 11.73 | 0 |
+| Mode | Answer fact recall | Grounded fact recall | Citation precision | Claim citation coverage | Availability | End-to-end quality /100 | Quality when available /100 | Mean synthesis s | Total pipeline s | Errors |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| raw_searxng | 0.6667 | 0.5278 | 0.7407 | 0.7074 | 1.0000 | 61.24 | 61.24 | 6.12 | 10.12 | 0 |
+| adaptive_hybrid | 0.6667 | 0.6667 | 0.8333 | 0.7167 | 1.0000 | 66.33 | 66.33 | 15.84 | 41.42 | 0 |
 
 ## Per question
 
-| Question | Mode | Answer fact recall | Grounded fact recall | Citation precision | Claim citation coverage | Quality /100 | Synthesis s | Error |
-|---|---|---:|---:|---:|---:|---:|---:|---|
-| aq02 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 0.80 | 98.00 | 17.97 | — |
-| aq02 | raw_searxng | 1.00 | 1.00 | 1.00 | 0.80 | 98.00 | 10.89 | — |
-| aq02 | raw_searxng | 0.75 | 0.75 | 1.00 | 0.80 | 73.50 | 8.83 | — |
-| aq02 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 0.80 | 98.00 | 18.08 | — |
-| aq02 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 0.80 | 98.00 | 17.22 | — |
-| aq02 | raw_searxng | 0.75 | 0.75 | 1.00 | 0.80 | 73.50 | 9.64 | — |
-| aq05 | raw_searxng | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 3.77 | — |
-| aq05 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 11.31 | — |
-| aq05 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 10.56 | — |
-| aq05 | raw_searxng | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 4.17 | — |
-| aq05 | raw_searxng | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 3.22 | — |
-| aq05 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 11.23 | — |
-| aq04 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 10.75 | — |
-| aq04 | raw_searxng | 1.00 | 1.00 | 0.75 | 1.00 | 96.25 | 4.17 | — |
-| aq04 | raw_searxng | 1.00 | 1.00 | 0.75 | 1.00 | 96.25 | 3.81 | — |
-| aq04 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 11.00 | — |
-| aq04 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 10.03 | — |
-| aq04 | raw_searxng | 1.00 | 1.00 | 0.75 | 1.00 | 96.25 | 4.53 | — |
-| aq03 | raw_searxng | 1.00 | 1.00 | 0.67 | 0.67 | 91.67 | 4.44 | — |
-| aq03 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 12.83 | — |
-| aq03 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 10.84 | — |
-| aq03 | raw_searxng | 1.00 | 1.00 | 0.67 | 0.67 | 91.67 | 4.92 | — |
-| aq03 | raw_searxng | 1.00 | 1.00 | 0.67 | 0.67 | 91.67 | 4.03 | — |
-| aq03 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 12.72 | — |
-| aq06 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 9.16 | — |
-| aq06 | raw_searxng | 0.00 | 0.00 | 1.00 | 1.00 | 0.00 | 3.33 | — |
-| aq06 | raw_searxng | 0.00 | 0.00 | 1.00 | 1.00 | 0.00 | 2.88 | — |
-| aq06 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 9.36 | — |
-| aq06 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 8.41 | — |
-| aq06 | raw_searxng | 0.00 | 0.00 | 1.00 | 1.00 | 0.00 | 3.61 | — |
-| aq01 | raw_searxng | 0.00 | 0.00 | 1.00 | 0.50 | 0.00 | 5.19 | — |
-| aq01 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 0.67 | 96.67 | 10.98 | — |
-| aq01 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 8.73 | — |
-| aq01 | raw_searxng | 0.00 | 0.00 | 1.00 | 0.50 | 0.00 | 4.89 | — |
-| aq01 | raw_searxng | 0.00 | 0.00 | 1.00 | 0.50 | 0.00 | 4.11 | — |
-| aq01 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 9.97 | — |
+| Question | Mode | Answer fact recall | Grounded fact recall | Citation precision | Claim citation coverage | Quality /100 | Synthesis s | Total pipeline s | Error |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| aq02 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 0.80 | 98.00 | 27.69 | 71.28 | — |
+| aq02 | raw_searxng | 1.00 | 1.00 | 1.00 | 0.80 | 98.00 | 10.62 | 17.39 | — |
+| aq02 | raw_searxng | 1.00 | 1.00 | 1.00 | 0.80 | 98.00 | 12.59 | 19.36 | — |
+| aq02 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 0.80 | 98.00 | 23.92 | 32.75 | — |
+| aq02 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 0.80 | 98.00 | 22.75 | 30.36 | — |
+| aq02 | raw_searxng | 1.00 | 1.00 | 1.00 | 0.80 | 98.00 | 13.17 | 19.94 | — |
+| aq05 | raw_searxng | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 6.80 | 10.69 | — |
+| aq05 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 15.09 | 160.75 | — |
+| aq05 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 13.22 | 25.69 | — |
+| aq05 | raw_searxng | 1.00 | 1.00 | 0.67 | 1.00 | 95.00 | 5.61 | 9.50 | — |
+| aq05 | raw_searxng | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 6.41 | 10.30 | — |
+| aq05 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 13.47 | 19.92 | — |
+| aq04 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 12.55 | 32.55 | — |
+| aq04 | raw_searxng | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 4.49 | 8.50 | — |
+| aq04 | raw_searxng | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 4.88 | 8.89 | — |
+| aq04 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 13.56 | 19.87 | — |
+| aq04 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 12.34 | 92.17 | — |
+| aq04 | raw_searxng | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 6.89 | 10.90 | — |
+| aq03 | raw_searxng | 1.00 | 0.50 | 0.33 | 0.33 | 73.33 | 6.51 | 9.98 | — |
+| aq03 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 28.59 | 57.88 | — |
+| aq03 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 12.52 | 16.80 | — |
+| aq03 | raw_searxng | 1.00 | 0.00 | 0.67 | 0.50 | 70.00 | 6.08 | 9.55 | — |
+| aq03 | raw_searxng | 1.00 | 0.00 | 0.67 | 0.50 | 70.00 | 5.19 | 8.66 | — |
+| aq03 | adaptive_hybrid | 1.00 | 1.00 | 1.00 | 1.00 | 100.00 | 18.53 | 22.78 | — |
+| aq06 | adaptive_hybrid | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 12.42 | 36.85 | — |
+| aq06 | raw_searxng | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 4.02 | 7.12 | — |
+| aq06 | raw_searxng | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 3.50 | 6.61 | — |
+| aq06 | adaptive_hybrid | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 13.11 | 18.65 | — |
+| aq06 | adaptive_hybrid | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 11.67 | 15.37 | — |
+| aq06 | raw_searxng | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 3.94 | 7.04 | — |
+| aq01 | raw_searxng | 0.00 | 0.00 | 1.00 | 1.00 | 0.00 | 3.22 | 5.97 | — |
+| aq01 | adaptive_hybrid | 0.00 | 0.00 | 1.00 | 0.50 | 0.00 | 10.03 | 61.55 | — |
+| aq01 | adaptive_hybrid | 0.00 | 0.00 | 1.00 | 0.50 | 0.00 | 10.97 | 14.33 | — |
+| aq01 | raw_searxng | 0.00 | 0.00 | 1.00 | 1.00 | 0.00 | 3.61 | 6.36 | — |
+| aq01 | raw_searxng | 0.00 | 0.00 | 1.00 | 1.00 | 0.00 | 2.56 | 5.32 | — |
+| aq01 | adaptive_hybrid | 0.00 | 0.00 | 1.00 | 0.50 | 0.00 | 12.62 | 15.94 | — |
 
 Full generated answers, assertions, claim units, citations, retrieval packages, and errors are written to the local generated artifact `latest-synthesized-answers.json`, which is intentionally ignored by Git.

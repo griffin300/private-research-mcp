@@ -39,7 +39,23 @@ _STOP = {
 
 
 def tokenize(value: str) -> list[str]:
-    return [token.casefold() for token in re.findall(r"[\w+#.-]{2,}", value)]
+    tokens: list[str] = []
+    for raw in re.findall(r"[\w+#.-]{2,}", value):
+        raw = raw.strip(".-")
+        if len(raw) < 2:
+            continue
+        identifier_parts: list[str] = []
+        for component in raw.split("."):
+            spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", component)
+            identifier_parts.extend(re.findall(r"[\w+#-]{2,}", spaced))
+        expanded_identifier = len(identifier_parts) > 1 and any(
+            character.isalpha() for character in raw
+        )
+        if expanded_identifier:
+            tokens.extend(part.casefold() for part in identifier_parts)
+        else:
+            tokens.append(raw.casefold())
+    return tokens
 
 
 def meaningful_tokens(value: str) -> list[str]:
@@ -114,4 +130,24 @@ def rank_passages(query: str, passages: list[Passage]) -> list[Passage]:
     maximum = max((passage.relevance_score for passage in passages), default=1.0) or 1.0
     for passage in passages:
         passage.relevance_score = round(min(1.0, passage.relevance_score / maximum), 4)
+    return sorted(passages, key=lambda passage: passage.relevance_score, reverse=True)
+
+
+def rank_passages_for_queries(queries: list[str], passages: list[Passage]) -> list[Passage]:
+    """Rank against each independent facet so a compound prompt cannot dilute relevance."""
+    focused = list(dict.fromkeys(query for query in queries if query.strip()))
+    if len(focused) <= 1:
+        return rank_passages(focused[0] if focused else "", passages)
+    best_scores = [0.0] * len(passages)
+    for query in focused:
+        copies = [passage.model_copy(deep=True) for passage in passages]
+        rank_passages(query, copies)
+        query_terms = set(meaningful_tokens(query))
+        for index, candidate in enumerate(copies):
+            passage_terms = set(meaningful_tokens(f"{candidate.heading or ''} {candidate.text}"))
+            coverage = len(query_terms & passage_terms) / max(1, len(query_terms))
+            best_scores[index] = max(best_scores[index], candidate.relevance_score * coverage)
+    maximum = max(best_scores, default=1.0) or 1.0
+    for passage, score in zip(passages, best_scores, strict=True):
+        passage.relevance_score = round(min(1.0, score / maximum), 4)
     return sorted(passages, key=lambda passage: passage.relevance_score, reverse=True)

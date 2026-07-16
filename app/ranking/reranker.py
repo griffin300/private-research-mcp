@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from app.models import Passage
-from app.ranking.lexical import rank_passages
+from app.ranking.lexical import rank_passages, rank_passages_for_queries
 
 
 class HybridReranker:
     def rank(self, query: str, passages: list[Passage]) -> list[Passage]:
         # Lexical mode is always available. Local embeddings/cross-encoder are additive only.
         return rank_passages(query, passages)
+
+    def rank_for_queries(self, queries: list[str], passages: list[Passage]) -> list[Passage]:
+        return rank_passages_for_queries(queries, passages)

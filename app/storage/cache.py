@@ -44,3 +44,8 @@ class Cache:
             "INSERT OR REPLACE INTO cache_entries VALUES (?, ?, ?, ?, ?)",
             (namespace, key, self.database.encode(value), now.isoformat(), (now + ttl).isoformat()),
         )
+
+    def delete(self, namespace: str, key: str) -> None:
+        self.database.execute(
+            "DELETE FROM cache_entries WHERE namespace=? AND cache_key=?", (namespace, key)
+        )

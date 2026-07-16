@@ -3,7 +3,7 @@ import pytest
 import respx
 
 from app.orchestration.planner import EnhancedQueryPlanner
-from app.search.query_expansion import HeuristicQueryPlanner
+from app.search.query_expansion import HeuristicQueryPlanner, split_compound_query
 
 
 def test_query_expansion_is_deterministic_and_bounded() -> None:
@@ -26,6 +26,46 @@ def test_historical_release_does_not_get_current_release_notes() -> None:
     assert not plan.time_sensitive
     assert not any("current release notes" in query for query in plan.queries)
     assert any("Python 3.12.0 released" in query for query in plan.queries)
+
+
+def test_explicit_json_query_batch_is_bounded_and_decomposed() -> None:
+    value = '["What is MCP Streamable HTTP?", "How does SQLite WAL mode work?", "What is Tor isolation?", "What is robots.txt?", "ignored fifth query"]'
+    assert split_compound_query(value) == [
+        "What is MCP Streamable HTTP?",
+        "How does SQLite WAL mode work?",
+        "What is Tor isolation?",
+        "What is robots.txt?",
+    ]
+
+
+def test_explicit_semicolon_batch_splits_but_normal_comparison_does_not() -> None:
+    assert split_compound_query("What is MCP Streamable HTTP?; How does SQLite WAL mode work?") == [
+        "What is MCP Streamable HTTP?",
+        "How does SQLite WAL mode work?",
+    ]
+    assert split_compound_query("Compare REST and GraphQL for a small API") == [
+        "Compare REST and GraphQL for a small API"
+    ]
+
+
+def test_unmarked_multiline_prose_stays_coherent_but_bullets_split() -> None:
+    prose = "Compare REST and GraphQL for a small API.\nInclude operational tradeoffs and cost."
+    assert split_compound_query(prose) == [
+        "Compare REST and GraphQL for a small API. Include operational tradeoffs and cost."
+    ]
+    assert split_compound_query(
+        "- What is MCP Streamable HTTP?\n- How does SQLite WAL mode work?"
+    ) == ["What is MCP Streamable HTTP?", "How does SQLite WAL mode work?"]
+
+
+def test_compound_split_respects_caller_query_budget() -> None:
+    batch = '["First focused research question", "Second focused research question", "Third focused research question", "Fourth focused research question"]'
+    assert len(split_compound_query(batch, limit=3)) == 3
+
+
+def test_compound_split_never_exceeds_a_one_query_budget() -> None:
+    batch = '["First focused research question", "Second focused research question"]'
+    assert split_compound_query(batch, limit=1) == [batch]
 
 
 @pytest.mark.asyncio
