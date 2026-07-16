@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import html
+import ipaddress
 import json
+from urllib.parse import SplitResult, urlsplit
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from app.runtime import Runtime
@@ -59,7 +61,8 @@ def create_dashboard_router(runtime: Runtime) -> APIRouter:
 <p>Raw queries remain hidden unless persistence is explicitly enabled.</p></body></html>"""
 
     @router.post("/admin/clear")
-    async def clear(confirm: bool = False) -> dict[str, object]:
+    async def clear(request: Request, confirm: bool = False) -> dict[str, object]:
+        _require_same_origin_loopback_request(request)
         if not confirm:
             raise HTTPException(status_code=400, detail="confirm=true is required")
         return {
@@ -70,6 +73,50 @@ def create_dashboard_router(runtime: Runtime) -> APIRouter:
         }
 
     return router
+
+
+def _require_same_origin_loopback_request(request: Request) -> None:
+    """Reject browser-forgeable cross-origin and DNS-rebinding admin requests."""
+    try:
+        request_host = request.url.hostname
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="invalid admin request host") from exc
+    if not request_host or not _is_loopback_host(request_host):
+        raise HTTPException(status_code=403, detail="admin requests require a loopback host")
+
+    source = request.headers.get("origin") or request.headers.get("referer")
+    if not source or not _is_same_origin(source, request):
+        raise HTTPException(status_code=403, detail="same-origin admin request required")
+
+    fetch_site = request.headers.get("sec-fetch-site")
+    if fetch_site and fetch_site not in {"same-origin", "none"}:
+        raise HTTPException(status_code=403, detail="cross-site admin request rejected")
+
+
+def _is_loopback_host(host: str) -> bool:
+    normalized = host.rstrip(".").lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_same_origin(source: str, request: Request) -> bool:
+    try:
+        supplied = urlsplit(source)
+        target = urlsplit(str(request.url))
+        return _origin_tuple(supplied) == _origin_tuple(target)
+    except ValueError:
+        return False
+
+
+def _origin_tuple(parsed: SplitResult) -> tuple[str, str, int | None] | None:
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    default_port = 80 if parsed.scheme == "http" else 443
+    return parsed.scheme, parsed.hostname.rstrip(".").lower(), parsed.port or default_port
 
 
 def _privacy_status(runtime: Runtime) -> str:

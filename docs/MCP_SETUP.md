@@ -23,6 +23,8 @@ In LM Studio 0.3.17+, open **Program → Install → Edit mcp.json** and merge:
 
 Do not add proxy credentials or secrets. Save and enable the server. Expected tools: `search_web`, `deep_research`, `read_url`, `search_status`, `clear_local_data`. First call `search_status`; expected service/database status is healthy and `unsafe_fallback_enabled` is false.
 
+For production, disable any separate raw-SearXNG MCP entry in the same LM Studio configuration. Otherwise the model can bypass the private tool's batch repair, canonical-source routing, page verification, citation boundaries, deadlines, and query-conservation controls; the raw endpoint also gives it a second path with different privacy behavior.
+
 LM Studio currently uses Cursor-style `mcp.json` notation and supports local/remote MCP servers. Streamable HTTP is the production transport recommended by stable MCP Python SDK documentation.
 
 ## Stdio bridge
@@ -64,6 +66,8 @@ Expected output:
 ```text
 PASS: MCP initialized and all required tools are present
 ```
+
+`scripts/setup.ps1` treats three checks as launch gates: MCP initialization/tool discovery, a live private search plus fixed-URL read, and the three-facet compound search. The live gates are bounded by their client/server timeouts and fail setup if retrieval or facet coverage is missing.
 
 To verify the loopback Streamable HTTP endpoint from the host:
 

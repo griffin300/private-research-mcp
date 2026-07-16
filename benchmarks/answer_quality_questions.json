@@ -37,7 +37,7 @@
     "assertions": [
       {"label": "write-ahead log", "patterns": ["write[ -]ahead\\s+log"]},
       {"label": "readers and writer can proceed concurrently", "patterns": ["reader[s]?(?![^.]{0,180}\\b(?:cannot|can't|not|never|unable)\\b).{0,80}(?:simultaneous|concurrent|same time).{0,80}writer", "reader[s]?.{0,80}(?:do not|does not|don't).{0,30}block.{0,30}writer", "writer.{0,30}(?:does not|doesn't).{0,30}block.{0,30}reader", "writer(?![^.]{0,180}\\b(?:cannot|can't|not|never|unable)\\b).{0,80}(?:simultaneous|concurrent|same time).{0,80}reader", "writer(?![^.]{0,180}\\b(?:cannot|can't|not|never|unable)\\b).{0,80}reader[s]?.{0,40}(?:simultaneous|concurrent|same time)"]},
-      {"label": "only one writer at a time", "patterns": ["one\\s+writer\\s+at\\s+a\\s+time", "only\\s+one\\s+writer", "(?:a|one)\\s+single\\s+writer", "single\\s+writer", "one\\s+writer.{0,80}(?:multiple|many)\\s+reader"]}
+      {"label": "only one writer at a time", "patterns": ["one\\s+writer\\s+at\\s+a\\s+time", "only\\s+one\\s+writer", "(?:a|one)\\s+single\\s+writer", "single\\s+writer", "one\\s+writer.{0,80}(?:multiple|many)(?:\\s+concurrent)?\\s+readers?"]}
     ],
     "preferred_domains": ["sqlite.org"]
   },

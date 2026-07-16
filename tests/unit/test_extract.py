@@ -32,4 +32,35 @@ def test_extract_and_chunk_retains_offsets() -> None:
     assert page.title == "Article title"
     assert chunks
     assert all(chunk.end_offset > chunk.start_offset for chunk in chunks)
+    assert all(chunk.text == page.text[chunk.start_offset : chunk.end_offset] for chunk in chunks)
     assert "ignore previous instructions" not in page.text
+
+
+def test_chunk_text_preserves_heading_at_section_boundary() -> None:
+    text = (
+        "First Heading\n\n"
+        "The first section has evidence that must retain its original heading.\n\n"
+        "Second Heading\n\n"
+        "The second section has different evidence."
+    )
+
+    chunks = chunk_text(text, target_chars=500, max_chars=800)
+
+    assert [chunk.heading for chunk in chunks] == ["First Heading", "Second Heading"]
+    assert "The first section" in chunks[0].text
+    assert "Second Heading" not in chunks[0].text
+    assert all(chunk.text == text[chunk.start_offset : chunk.end_offset] for chunk in chunks)
+
+
+def test_chunk_text_long_paragraph_preserves_source_whitespace_and_offsets() -> None:
+    text = (
+        "Long Section\r\n\r\n"
+        "First sentence has useful evidence.   Second sentence keeps triple spaces!\n"
+        "Third sentence keeps its original line break?  Fourth sentence completes the text."
+    )
+
+    chunks = chunk_text(text, target_chars=45, max_chars=72)
+
+    assert len(chunks) >= 3
+    assert any("   " in chunk.text or "\n" in chunk.text for chunk in chunks)
+    assert all(chunk.text == text[chunk.start_offset : chunk.end_offset] for chunk in chunks)

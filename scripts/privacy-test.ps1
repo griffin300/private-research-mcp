@@ -81,10 +81,23 @@ Test-Privacy 'Loopback bridge cannot directly reach public IPs' {
     if ($LASTEXITCODE -ne 0) { throw 'bridge egress probe did not execute' }
     if ($result -notmatch 'BLOCKED') { throw 'loopback bridge has direct egress' }
 }
+Test-Privacy 'Unprivileged loopback bridge cannot use Docker DNS for public names' {
+    $result = docker compose exec -T --user bridge mcp-bridge sh -c "getent hosts example.com >/dev/null 2>&1 && echo RESOLVED || echo BLOCKED"
+    if ($LASTEXITCODE -ne 0) { throw 'bridge DNS probe did not execute' }
+    if ($result -notmatch 'BLOCKED') { throw 'network-facing bridge user resolved public DNS' }
+}
 Test-Privacy 'Raw query logging disabled' {
     $value = docker compose exec -T app python -c "from app.config import Settings; print(Settings().log_raw_queries)"
     if ($LASTEXITCODE -ne 0) { throw 'could not read runtime setting' }
     if ($value -notmatch 'False') { throw 'raw query logging enabled' }
+}
+Test-Privacy 'Runtime privacy settings are launch-safe' {
+    $code = "from app.config import Settings; s=Settings(); print(s.privacy_mode, s.store_search_history, s.allow_private_destinations)"
+    $value = docker compose exec -T app python -c $code
+    if ($LASTEXITCODE -ne 0) { throw 'could not read runtime privacy settings' }
+    if ($value -notmatch '^strict False False$') {
+        throw "unsafe runtime privacy settings: $value"
+    }
 }
 Test-Privacy 'Query-bearing SearXNG container logs are disabled' {
     $container = Get-Container 'private-research-mcp-searxng-1'

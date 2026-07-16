@@ -13,7 +13,6 @@ def select_search_mode(query: str) -> SearchMode:
         r"\b(?:conflict|contradiction|disagree|multiple independent sources)\b",
         r"\b(?:design|architecture|threat model|trade-?offs?)\b",
         r"\b(?:analy[sz]e|evaluate|assess|synthesi[sz]e|optimi[sz]e|improve)\b",
-        r"\b(?:compare|comparison|versus|vs\.?|difference|differ)\b",
         r"\b(?:latest|current|today|recent|as of|right now)\b",
         r"\b(?:evidence|sources|research|citations?)\b",
     )

@@ -26,6 +26,7 @@ def create_runtime(settings: Settings | None = None) -> Runtime:
     settings = settings or Settings()
     database = Database(settings.database_path)
     migrate(database)
+    database.set_query_data_persistence(settings.cache_retention_days > 0)
     clean_expired(database, settings.cache_retention_days)
     fetcher = HttpFetcher(
         policy=FetchPolicy(
@@ -38,7 +39,11 @@ def create_runtime(settings: Settings | None = None) -> Runtime:
         allow_private=settings.allow_private_destinations,
         per_domain_concurrency=settings.per_domain_concurrency,
     )
-    backend = SearxngBackend(settings.searxng_base_url, settings.request_timeout_seconds)
+    backend = SearxngBackend(
+        settings.searxng_base_url,
+        settings.request_timeout_seconds,
+        settings.searxng_recovery_delay_seconds,
+    )
     browser = BrowserFetcher(
         settings.browser_service_url, settings.request_timeout_seconds, settings.enable_browser
     )

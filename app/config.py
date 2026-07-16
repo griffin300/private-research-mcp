@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     max_redirects: int = Field(default=4, ge=0, le=10)
     per_domain_concurrency: int = Field(default=2, ge=1, le=10)
     search_min_interval_seconds: float = Field(default=1.25, ge=0, le=10)
+    searxng_recovery_delay_seconds: float = Field(default=10.5, ge=0, le=30)
     quick_queries: int = Field(default=3, ge=1, le=10)
     quick_raw_results: int = Field(default=15, ge=3, le=100)
     quick_pages: int = Field(default=5, ge=1, le=25)
@@ -91,6 +92,20 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security_boundaries(self) -> Settings:
+        unsupported_ranking_features = [
+            name
+            for enabled, name in (
+                (self.enable_embeddings, "enable_embeddings"),
+                (self.enable_reranker, "enable_reranker"),
+            )
+            if enabled
+        ]
+        if unsupported_ranking_features:
+            names = ", ".join(unsupported_ranking_features)
+            raise ValueError(
+                f"unsupported ranking capability flags ({names}); "
+                "this build implements lexical ranking only"
+            )
         if self.privacy_mode not in {"strict", "development"}:
             raise ValueError("privacy_mode must be 'strict' or 'development'")
         if self.privacy_mode == "strict":

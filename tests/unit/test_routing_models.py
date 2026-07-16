@@ -20,6 +20,10 @@ def test_quality_heavy_auto_queries_route_to_deep(query: str) -> None:
 
 def test_simple_fact_auto_query_routes_to_standard() -> None:
     assert select_search_mode("What does HTTP status 429 mean?") == SearchMode.STANDARD
+    assert (
+        select_search_mode("How does curl socks5h differ from socks5?")
+        == SearchMode.STANDARD
+    )
 
 
 def test_search_snippet_rejects_mismatched_citation_and_boundary() -> None:

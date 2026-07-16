@@ -22,7 +22,8 @@ def deduplicate_results(results: list[SearchResult]) -> list[SearchResult]:
                 ).ratio()
                 >= 0.94
             )
-            if same_url or (candidate.domain == existing.domain and title_match) or snippet_match:
+            same_domain = candidate.domain == existing.domain
+            if same_url or (same_domain and (title_match or snippet_match)):
                 duplicate = existing
                 break
         if duplicate:

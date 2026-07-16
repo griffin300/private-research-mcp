@@ -14,7 +14,9 @@ Search results are cached only when at least one result is present. Identical in
 
 Quick, standard, and deep network research has a 90, 240, and 720 second cooperative budget. Search receives 55% of that budget, preserving time for retrieval and a 180-second client-margin after the longest network bound. Pending cooperative network tasks are canceled and fully settled at the bound; completed exact results, sources, and evidence are packaged with an explicit warning rather than leaving orphaned work after an MCP client deadline.
 
-SearXNG keeps several independent general engines enabled and adds the `it`, `science`, or `news` vertical only when deterministic query signals call for it. Engine suspension windows are bounded so a rotated Tor exit can recover without retaining a day-long CAPTCHA/access-denied state; requests remain paced in the app and there is no CAPTCHA bypass.
+The only host-published service is an unprivileged MCP bridge bound to `127.0.0.1`. Its root-only watcher resolves the fixed internal `app` service name through Docker DNS, allows only that current address on TCP 8088, and atomically publishes the target to an unprivileged per-connection forwarder. Docker DNS access is owner-restricted; the network-facing bridge user cannot use it as an egress channel. Compose also restarts the bridge after a Compose-managed app replacement, while re-resolution covers independent app recreation without widening access to an internal subnet.
+
+SearXNG keeps several independent general engines enabled and adds the `it`, `science`, or `news` vertical only when deterministic query signals call for it. It rotates engine requests across four bounded SOCKS-auth isolation labels; `tor-search` maps those labels to separate Tor circuits. Per-engine retries are disabled because they amplify every aggregate search. Instead, the app preserves the exact query and retries the whole SearXNG request once after the bounded suspension interval only when transport fails or the complete response is empty and reports unresponsive engines. Requests remain paced, there is no direct fallback, and there is no CAPTCHA bypass.
 
 ## Request flow
 

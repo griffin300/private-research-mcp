@@ -66,6 +66,76 @@ def test_hybrid_scoring_counts_traceable_search_snippet_without_inflating_eviden
     assert metrics["citation_integrity"] == 0.0
 
 
+def test_preferred_source_requires_a_gold_fact_from_that_domain() -> None:
+    item = {
+        "assertions": [{"label": "fact", "patterns": [r"correct fact"]}],
+        "preferred_domains": ["primary.example"],
+    }
+    result = {
+        "sources": [
+            {
+                "source_id": "src_primary",
+                "url": "https://primary.example/unrelated",
+                "domain": "primary.example",
+            },
+            {
+                "source_id": "src_secondary",
+                "url": "https://secondary.example/fact",
+                "domain": "secondary.example",
+            },
+        ],
+        "evidence": [
+            {
+                "evidence_id": "ev_primary",
+                "source_id": "src_primary",
+                "text": "This primary-source passage is unrelated.",
+                "start_offset": 0,
+                "end_offset": 41,
+                "citation": "[src_primary, ev_primary]",
+            },
+            {
+                "evidence_id": "ev_secondary",
+                "source_id": "src_secondary",
+                "text": "The correct fact is only in the secondary source.",
+                "start_offset": 0,
+                "end_offset": 49,
+                "citation": "[src_secondary, ev_secondary]",
+            },
+        ],
+    }
+
+    metrics = score_result(item, "adaptive_hybrid", result)
+
+    assert metrics["fact_recall"] == 1.0
+    assert metrics["preferred_source_hit"] == 0.0
+
+
+def test_raw_preferred_source_requires_a_gold_fact_from_that_source() -> None:
+    item = {
+        "assertions": [{"label": "fact", "patterns": [r"correct fact"]}],
+        "preferred_domains": ["primary.example"],
+    }
+    result = {
+        "sources": [
+            {
+                "title": "Primary but unrelated",
+                "snippet": "No benchmark assertion appears here.",
+                "url": "https://primary.example/unrelated",
+            },
+            {
+                "title": "Secondary result",
+                "snippet": "The correct fact is present here.",
+                "url": "https://secondary.example/fact",
+            },
+        ]
+    }
+
+    metrics = score_result(item, "raw_searxng", result)
+
+    assert metrics["fact_recall"] == 1.0
+    assert metrics["preferred_source_hit"] == 0.0
+
+
 def test_wal_concurrency_assertion_rejects_explicit_negation() -> None:
     questions = json.loads(
         Path("benchmarks/answer_quality_questions.json").read_text(encoding="utf-8")

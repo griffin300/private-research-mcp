@@ -2,6 +2,7 @@ import httpx
 import pytest
 import respx
 
+from app.orchestration.pipeline import _ranking_queries
 from app.orchestration.planner import EnhancedQueryPlanner
 from app.search.query_expansion import HeuristicQueryPlanner, split_compound_query
 
@@ -26,6 +27,26 @@ def test_historical_release_does_not_get_current_release_notes() -> None:
     assert not plan.time_sensitive
     assert not any("current release notes" in query for query in plan.queries)
     assert any("Python 3.12.0 released" in query for query in plan.queries)
+    assert plan.queries[1] == '"Python 3.12.0" release date'
+    assert not any(query.endswith((" paper", " issue", " forum")) for query in plan.queries)
+
+
+def test_multi_part_ranking_facets_keep_distinctive_subject_anchor() -> None:
+    question = "Which RFC defines the private IPv4 blocks, and what are the three blocks?"
+    plan = HeuristicQueryPlanner().plan(question, 6)
+    facets = _ranking_queries(plan, question)
+    assert len(facets) == 2
+    assert all("rfc" in facet.casefold() for facet in facets)
+
+
+def test_multi_part_ranking_does_not_leak_identifiers_into_independent_facets() -> None:
+    question = "What does RFC 9110 define, and how does SQLite WAL mode work?"
+    plan = HeuristicQueryPlanner().plan(question, 6)
+    facets = _ranking_queries(plan, question)
+
+    sqlite_facet = next(facet for facet in facets if "sqlite" in facet.casefold())
+    assert "rfc" not in sqlite_facet.casefold()
+    assert "9110" not in sqlite_facet
 
 
 def test_explicit_json_query_batch_is_bounded_and_decomposed() -> None:

@@ -6,6 +6,7 @@ from app.evidence.coverage import analyze_coverage
 from app.evidence.ledger import _select_diverse, build_evidence
 from app.models import EvidenceRecord, Passage, SearchResult, SourceRecord
 from app.orchestration.pipeline import (
+    _is_query_aligned_primary,
     _missing_retrieval_facets,
     _preferred_exact_candidates,
     _select_fetch_candidates,
@@ -54,6 +55,26 @@ def test_coverage_reports_missing_topics() -> None:
     )
     assert "MCP transport" in report.covered_topics
     assert "Docker DNS isolation" in report.missing_topics
+
+
+def test_coverage_counts_only_relevant_evidence_backed_sources() -> None:
+    supported = source("src_001", "supported.example")
+    fetched_only = [
+        source("src_002", "unused-one.example"),
+        source("src_003", "unused-two.example"),
+    ]
+    evidence = [
+        make_evidence(
+            supported,
+            Passage(text="MCP transport is documented.", start_offset=0, end_offset=28),
+            1,
+        )
+    ]
+
+    report = analyze_coverage(["MCP transport"], evidence, [supported, *fetched_only])
+
+    assert report.independent_source_count == 1
+    assert report.status == "moderate"
 
 
 def test_numeric_contradiction_detection() -> None:
@@ -192,7 +213,7 @@ def test_facet_reservation_precedes_global_score_floor() -> None:
     dominant = source("src_001")
     weak_unique = source("src_002")
     weak_unique.quality_score = 0.0
-    weak_unique.relevance_score = 0.0
+    weak_unique.relevance_score = 0.18
     selected = _select_diverse(
         [
             (
@@ -218,6 +239,64 @@ def test_facet_reservation_precedes_global_score_floor() -> None:
         queries=["rare facet"],
     )
     assert selected[0][0].source_id == "src_002"
+
+
+def test_facet_reservation_cannot_bypass_absolute_anchor_relevance_gate() -> None:
+    anchor_missing = source("src_anchor_missing")
+    anchor_missing.relevance_score = 0.0
+
+    selected = _select_diverse(
+        [
+            (
+                anchor_missing,
+                Passage(
+                    text="Python release date information",
+                    start_offset=0,
+                    end_offset=31,
+                    relevance_score=1.0,
+                ),
+            )
+        ],
+        1,
+        queries=["Python 3.12.0 release date"],
+    )
+
+    assert selected == []
+
+
+def test_irrelevant_high_prior_does_not_suppress_best_relevant_evidence() -> None:
+    irrelevant = source("src_irrelevant")
+    irrelevant.quality_score = 1.0
+    irrelevant.relevance_score = 0.0
+    relevant = source("src_relevant")
+    relevant.quality_score = 0.0
+    relevant.relevance_score = 0.20
+
+    selected = _select_diverse(
+        [
+            (
+                irrelevant,
+                Passage(
+                    text="Unrelated high-prior material",
+                    start_offset=0,
+                    end_offset=29,
+                    relevance_score=1.0,
+                ),
+            ),
+            (
+                relevant,
+                Passage(
+                    text="Relevant supporting evidence",
+                    start_offset=0,
+                    end_offset=28,
+                    relevance_score=0.10,
+                ),
+            ),
+        ],
+        1,
+    )
+
+    assert selected[0][0].source_id == "src_relevant"
 
 
 def test_evidence_diversity_exhausts_unseen_sources_before_repeats() -> None:
@@ -267,6 +346,34 @@ def test_evidence_diversity_exhausts_unseen_sources_before_repeats() -> None:
         "src_f",
         "src_g",
     }
+
+
+def test_facet_reservations_honor_two_passage_source_cap() -> None:
+    dominant = source("src_dominant")
+    alternate = source("src_alternate")
+    alternate.relevance_score = 0.20
+    candidates = [
+        (
+            dominant,
+            Passage(text=f"facet {name}", start_offset=0, end_offset=11, relevance_score=1.0),
+        )
+        for name in ("alpha", "beta", "gamma")
+    ]
+    candidates.append(
+        (
+            alternate,
+            Passage(text="facet gamma", start_offset=0, end_offset=11, relevance_score=0.1),
+        )
+    )
+
+    selected = _select_diverse(
+        candidates,
+        3,
+        queries=["facet alpha", "facet beta", "facet gamma"],
+    )
+
+    assert sum(item[0].source_id == "src_dominant" for item in selected) == 2
+    assert any(item[0].source_id == "src_alternate" for item in selected)
 
 
 def test_injected_passage_does_not_suppress_clean_facet_backfill() -> None:
@@ -362,6 +469,37 @@ def test_compound_fetch_selection_continues_after_a_missing_facet() -> None:
         ],
     )
     assert selected == [sqlite, mcp]
+
+
+def test_primary_discovery_requires_authority_and_independent_content_alignment() -> None:
+    query = "How does SQLite WAL coordinate concurrent readers?"
+    zero_overlap_authority = SearchResult(
+        url="https://sqlite.org/wal.html",
+        title="Official reference",
+        snippet="A complete technical manual.",
+        search_score=1.0,
+    )
+    aligned_authority = SearchResult(
+        url="https://sqlite.org/wal.html",
+        title="SQLite WAL concurrent readers",
+        snippet="Write-ahead logging coordinates readers.",
+        search_score=1.0,
+    )
+    arbitrary_docs = aligned_authority.model_copy(
+        update={"url": "https://docs.community.example/docs/sqlite-wal"}
+    )
+    repository_query = "Inspect the GitHub repository Pallets/Flask source code"
+    aligned_repository = SearchResult(
+        url="https://github.com/Pallets/Flask/tree/main/src",
+        title="Pallets/Flask source repository",
+        snippet="Inspect the Flask source code.",
+        search_score=1.0,
+    )
+
+    assert not _is_query_aligned_primary(query, zero_overlap_authority)
+    assert _is_query_aligned_primary(query, aligned_authority)
+    assert not _is_query_aligned_primary(query, arbitrary_docs)
+    assert _is_query_aligned_primary(repository_query, aligned_repository)
 
 
 def test_compound_fetch_selection_preserves_exact_preferred_sources() -> None:

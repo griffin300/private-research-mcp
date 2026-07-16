@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime
 from typing import Any
@@ -15,9 +16,15 @@ class SearxngError(RuntimeError):
 
 
 class SearxngBackend:
-    def __init__(self, base_url: str, timeout: float) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float,
+        recovery_delay_seconds: float = 10.5,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.recovery_delay_seconds = max(0.0, recovery_delay_seconds)
 
     async def search(
         self, query: str, *, language: str, recency_days: int | None, limit: int
@@ -33,17 +40,41 @@ class SearxngBackend:
             params["time_range"] = (
                 "day" if recency_days <= 1 else "month" if recency_days <= 31 else "year"
             )
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
-                response = await client.get(f"{self.base_url}/search", params=params)
-                response.raise_for_status()
-                payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise SearxngError(f"search backend unavailable: {type(exc).__name__}") from exc
-        raw_results = payload.get("results", [])
-        if not isinstance(raw_results, list):
-            raise SearxngError("search backend returned an invalid response")
-        return [self._parse(item, index) for index, item in enumerate(raw_results[:limit])]
+        last_error: httpx.HTTPError | ValueError | None = None
+        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+            for attempt in range(2):
+                try:
+                    response = await client.get(f"{self.base_url}/search", params=params)
+                    response.raise_for_status()
+                    payload = response.json()
+                    if not isinstance(payload, dict):
+                        raise ValueError("search backend returned an invalid response")
+                    raw_results = payload.get("results", [])
+                    if not isinstance(raw_results, list):
+                        raise ValueError("search backend returned an invalid response")
+                except (httpx.HTTPError, ValueError) as exc:
+                    last_error = exc
+                    if attempt == 0 and _is_retryable_request_error(exc):
+                        await asyncio.sleep(self.recovery_delay_seconds)
+                        continue
+                    raise SearxngError(
+                        f"search backend unavailable: {type(exc).__name__}"
+                    ) from exc
+
+                parsed = [
+                    self._parse(item, index)
+                    for index, item in enumerate(raw_results[:limit])
+                    if isinstance(item, dict)
+                ]
+                if parsed or attempt == 1 or not _is_degraded_empty(payload):
+                    return parsed
+                await asyncio.sleep(self.recovery_delay_seconds)
+
+        if last_error is not None:  # pragma: no cover - loop exits by return/raise.
+            raise SearxngError(
+                f"search backend unavailable: {type(last_error).__name__}"
+            ) from last_error
+        return []  # pragma: no cover - loop exits by return/raise.
 
     @staticmethod
     def _parse(item: dict[str, Any], index: int) -> SearchResult:
@@ -85,14 +116,15 @@ class SearxngBackend:
 def _categories_for_query(query: str) -> str:
     categories = ["general"]
     if re.search(
-        r"\b(?:api|code|curl|database|docker|git|http|https|java|javascript|linux|mcp|"
-        r"package|protocol|python|release|rfc|sdk|software|sql|typescript|version|windows)\b",
+        r"\b(?:bug|build|cargo|code|compile|compiler|debug|dependency|docker|error|"
+        r"exception|failed|failure|git|install|installation|issue|npm|package|pip|"
+        r"runtime|stack\s+trace|syntax|traceback|troubleshoot)\b",
         query,
         re.IGNORECASE,
     ):
         categories.append("it")
     if re.search(
-        r"\b(?:arxiv|clinical|doi|experiment|journal|paper|peer-reviewed|research|science|study)\b",
+        r"\b(?:arxiv|clinical|doi|experiment|journal|paper|peer-reviewed|science|scientific|study)\b",
         query,
         re.IGNORECASE,
     ):
@@ -104,3 +136,14 @@ def _categories_for_query(query: str) -> str:
     ):
         categories.append("news")
     return ",".join(categories)
+
+
+def _is_degraded_empty(payload: dict[str, Any]) -> bool:
+    unresponsive = payload.get("unresponsive_engines")
+    return isinstance(unresponsive, list) and bool(unresponsive)
+
+
+def _is_retryable_request_error(exc: httpx.HTTPError | ValueError) -> bool:
+    if isinstance(exc, httpx.TransportError):
+        return True
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500

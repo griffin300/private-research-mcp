@@ -49,13 +49,17 @@ def _select_diverse(
     def base_score(item: tuple[SourceRecord, Passage]) -> float:
         source, passage = item
         return (
-            0.65 * passage.relevance_score
+            0.45 * passage.relevance_score
+            + 0.30 * source.relevance_score
             + 0.25 * source.quality_score
-            + 0.10 * source.relevance_score
         )
 
-    maximum = max(base_score(item) for item in candidates)
-    remaining = list(candidates)
+    # Absolute post-fetch source relevance is a hard admission gate, including
+    # for facet reservations. A lexical facet match must not re-admit a page that
+    # failed a critical identifier/anchor check during source scoring.
+    remaining = [item for item in candidates if item[0].relevance_score >= 0.18]
+    if not remaining:
+        return []
     selected: list[tuple[SourceRecord, Passage]] = []
     selected_tokens: list[set[str]] = []
     source_counts: dict[str, int] = {}
@@ -73,7 +77,8 @@ def _select_diverse(
         required = 1.0 if len(terms) <= 2 else 0.60
         facet_matches = [
             (index, len(terms & set(meaningful_tokens(passage.text))) / max(1, len(terms)))
-            for index, (_, passage) in enumerate(remaining)
+            for index, (source, passage) in enumerate(remaining)
+            if source_counts.get(source.source_id, 0) < 2
         ]
         facet_matches = [
             (index, coverage) for index, coverage in facet_matches if coverage >= required
@@ -85,18 +90,23 @@ def _select_diverse(
             )
             select(best_index)
 
-    remaining = [item for item in remaining if base_score(item) >= maximum * 0.30]
+    if remaining:
+        # Apply the relative quality floor only after excluding irrelevant sources.
+        # Otherwise one high-prior but off-topic candidate can suppress every
+        # genuinely relevant passage in the evidence ledger.
+        relevant_maximum = max(base_score(item) for item in remaining)
+        remaining = [
+            item for item in remaining if base_score(item) >= relevant_maximum * 0.50
+        ]
 
     while remaining and len(selected) < limit:
-        unseen_sources = {
-            source.source_id for source, _ in remaining if source.source_id not in source_counts
-        }
-        require_new_source = bool(unseen_sources)
         eligible_indexes = [
             index
             for index, (source, _) in enumerate(remaining)
-            if not require_new_source or source.source_id not in source_counts
+            if source_counts.get(source.source_id, 0) < 2
         ]
+        if not eligible_indexes:
+            break
         best_index = 0
         best_score = -1.0
         for index in eligible_indexes:
@@ -106,7 +116,13 @@ def _select_diverse(
                 (_jaccard(terms, existing) for existing in selected_tokens), default=0.0
             )
             base = base_score((source, passage))
-            score = base - 0.25 * similarity - 0.05 * source_counts.get(source.source_id, 0)
+            new_source_bonus = 0.08 if source.source_id not in source_counts else 0.0
+            score = (
+                base
+                + new_source_bonus
+                - 0.25 * similarity
+                - 0.06 * source_counts.get(source.source_id, 0)
+            )
             if score > best_score:
                 best_index = index
                 best_score = score

@@ -37,7 +37,7 @@ from app.models import (
 from app.orchestration.budgets import budget_for
 from app.orchestration.planner import EnhancedPlannerError, EnhancedQueryPlanner
 from app.privacy.network_checks import configuration_network_check
-from app.privacy.redaction import query_fingerprint
+from app.privacy.redaction import has_sensitive_query, query_fingerprint, redact_url
 from app.ranking.freshness import freshness_score
 from app.ranking.lexical import meaningful_tokens
 from app.ranking.reranker import HybridReranker
@@ -45,6 +45,12 @@ from app.ranking.source_quality import explain_source_quality, score_search_resu
 from app.search.base import SearchBackend
 from app.search.deduplication import deduplicate_results
 from app.search.normalization import normalize_result
+from app.search.official_sources import (
+    distinctive_anchor_coverage,
+    distinctive_query_tokens,
+    domain_matches_authority,
+    official_source_candidates,
+)
 from app.search.query_expansion import HeuristicQueryPlanner, QueryPlan, split_compound_query
 from app.storage.cache import Cache
 from app.storage.database import Database
@@ -67,6 +73,19 @@ class _BrowserFallbackBudget:
         if self.remaining <= 0:
             return False
         self.remaining -= 1
+        return True
+
+
+@dataclass(slots=True)
+class _SearchFallbackBudget:
+    remaining: int
+    used: int = 0
+
+    def claim(self) -> bool:
+        if self.remaining <= 0:
+            return False
+        self.remaining -= 1
+        self.used += 1
         return True
 
 
@@ -162,6 +181,7 @@ class ResearchPipeline:
                 warnings.append(
                     f"Local enhanced planner failed ({exc}); deterministic planning was used."
                 )
+        ranking_queries = focused_queries if is_compound else _ranking_queries(plan, query)
         expansion_round_limit = (
             1
             if is_compound
@@ -205,12 +225,18 @@ class ResearchPipeline:
             include_domains or [],
             exclude_domains or [],
             sort_by_score=False,
-            relevance_queries=focused_queries,
+            relevance_queries=ranking_queries,
         )
+        official_raw = official_source_candidates(query)
+        if official_raw:
+            warnings.append(
+                "Added bounded canonical-source candidates derived locally from public identifiers."
+            )
         expanded_raw: list[SearchResult] = []
         rounds = 1
         queries_used = len(exact_queries)
         exact_query_keys = {candidate.casefold() for candidate in exact_queries}
+        reserved_fallbacks = 1 if query_limit > len(exact_queries) + 1 else 0
         expansion_queries = _unique_queries(
             [
                 candidate
@@ -222,11 +248,24 @@ class ResearchPipeline:
                 for round_number in range(1, expansion_round_limit)
                 for candidate in self._gap_queries(plan, round_number)
             ]
-        )[: max(0, query_limit - len(exact_queries))]
-        queries_per_round = max(
-            1,
-            (len(expansion_queries) + expansion_round_limit - 1) // expansion_round_limit,
+        )[: max(0, query_limit - len(exact_queries) - reserved_fallbacks)]
+        queries_per_round = (
+            len(expansion_queries) if is_compound else min(2, len(expansion_queries))
         )
+        planned_expansion_calls = (
+            len(expansion_queries)
+            if is_compound
+            else min(expansion_round_limit * queries_per_round, len(expansion_queries))
+        )
+        expansion_result_limit = max(
+            3,
+            min(
+                15,
+                max(0, budget.raw_results - len(exact_raw)) // max(1, planned_expansion_calls),
+            ),
+        )
+        search_fallback_budget = _SearchFallbackBudget(reserved_fallbacks)
+        weak_rounds = 0
         for round_number in range(expansion_round_limit):
             start = round_number * queries_per_round
             round_queries = expansion_queries[start : start + queries_per_round]
@@ -238,8 +277,9 @@ class ResearchPipeline:
                 round_queries,
                 language=language,
                 recency_days=recency_days,
-                limit=max(3, budget.raw_results // budget.queries),
+                limit=expansion_result_limit,
                 deadline_at=search_deadline_at,
+                fallback_budget=search_fallback_budget,
             )
             expanded_raw.extend(results)
             failures.extend(errors)
@@ -248,17 +288,28 @@ class ResearchPipeline:
                 query,
                 include_domains or [],
                 exclude_domains or [],
-                relevance_queries=focused_queries,
+                relevance_queries=ranking_queries,
             )
+            relevant_results = [
+                item for item in normalized if score_search_result(query, item) >= 0.30
+            ]
             primary_candidate = any(
-                source_type(item.url)
-                in {"official_documentation", "primary_institution", "source_repository"}
-                for item in normalized
+                _is_query_aligned_primary(query, item) for item in relevant_results
             )
-            weak_discovery = len(normalized) < budget.pages * 2 or not primary_candidate
-            more_rounds = round_number + 1 < expansion_round_limit and queries_used < query_limit
+            minimum_relevant = max(2, min(4, max_sources // 2))
+            weak_discovery = len(relevant_results) < minimum_relevant or not primary_candidate
+            useful_round = any(score_search_result(query, item) >= 0.30 for item in results)
+            weak_rounds = 0 if useful_round else weak_rounds + 1
+            more_rounds = (
+                round_number + 1 < expansion_round_limit
+                and queries_used + search_fallback_budget.used < query_limit
+            )
+            if weak_rounds >= 2:
+                break
             if mode == SearchMode.DEEP and more_rounds:
-                strong_discovery = len(normalized) >= max(6, max_sources * 2) and primary_candidate
+                strong_discovery = (
+                    len(relevant_results) >= max(6, max_sources) and primary_candidate
+                )
                 if round_number == 0 or not strong_discovery:
                     continue
             if mode == SearchMode.STANDARD and weak_discovery and more_rounds:
@@ -266,18 +317,18 @@ class ResearchPipeline:
             if not more_rounds or not weak_discovery:
                 break
         candidates = self._prepare_results(
-            exact_raw + expanded_raw,
+            exact_raw + expanded_raw + official_raw,
             query,
             include_domains or [],
             exclude_domains or [],
-            relevance_queries=focused_queries,
+            relevance_queries=ranking_queries,
         )
         expanded_candidates = self._prepare_results(
             expanded_raw,
             query,
             include_domains or [],
             exclude_domains or [],
-            relevance_queries=focused_queries,
+            relevance_queries=ranking_queries,
         )
         snippet_limit = min(20, max(10, max_sources))
         exact_snippets = _build_search_snippets(
@@ -332,15 +383,15 @@ class ResearchPipeline:
         candidate_pool_limit = (
             min(
                 len(candidates),
-                max(pages_to_fetch * 3, pages_to_fetch + 2 * len(focused_queries)),
+                max(pages_to_fetch * 3, pages_to_fetch + 2 * len(ranking_queries)),
             )
-            if is_compound
+            if len(ranking_queries) > 1
             else pages_to_fetch
         )
         fetch_candidates = _select_fetch_candidates(
             candidates,
             candidate_pool_limit,
-            relevance_queries=focused_queries if is_compound else None,
+            relevance_queries=ranking_queries if len(ranking_queries) > 1 else None,
             preferred_candidates=list(preferred_by_query.values()),
         )
         ranked_sources, pages_attempted = await self._retrieve(
@@ -349,18 +400,21 @@ class ResearchPipeline:
             fetch_candidates,
             failures,
             browser_budget=budget.browser_pages,
-            relevance_queries=focused_queries,
+            relevance_queries=ranking_queries,
             deadline_at=deadline_at,
             attempt_limit=pages_to_fetch,
             preferred_by_query=preferred_by_query,
         )
         sources = [source for source, _ in ranked_sources]
-        evidence_limit = min(budget.passages, max(8, max_sources * 3))
+        # Keep the verified context compact for local models: one passage per
+        # requested source on average, with an eight-record floor for compound
+        # facet coverage. Deep mode can still scale with max_sources.
+        evidence_limit = min(budget.passages, max(8, max_sources))
         evidence = build_evidence(
             ranked_sources,
             evidence_limit,
             query=query,
-            queries=focused_queries if is_compound else None,
+            queries=ranking_queries if len(ranking_queries) > 1 else None,
         )
         coverage = analyze_coverage(plan.topics or [query], evidence, sources)
         contradictions = detect_contradictions(evidence) if mode == SearchMode.DEEP else []
@@ -418,7 +472,7 @@ class ResearchPipeline:
         self._record_request(
             package,
             int((time.monotonic() - started) * 1000),
-            queries_generated=queries_used,
+            queries_generated=queries_used + search_fallback_budget.used,
             raw_results=len(exact_raw) + len(expanded_raw),
             pages_fetched=pages_attempted,
             extraction_failures=sum(item.get("stage") == "fetch_or_extract" for item in failures),
@@ -480,10 +534,15 @@ class ResearchPipeline:
             passage.injection_reasons = assessment.reasons
             if assessment.risk != "high":
                 safe.append(passage)
+        metadata = page.model_dump(exclude={"text"}, mode="json")
+        metadata["url"] = redact_url(str(metadata["url"]))
+        metadata["title"] = _redact_possible_url(str(metadata["title"]))
+        if metadata.get("canonical_url"):
+            metadata["canonical_url"] = redact_url(str(metadata["canonical_url"]))
         return {
-            "url": page.url,
-            "title": page.title,
-            "metadata": page.model_dump(exclude={"text"}, mode="json"),
+            "url": redact_url(page.url),
+            "title": _redact_possible_url(page.title),
+            "metadata": metadata,
             "passages": [passage.model_dump(mode="json") for passage in safe[:20]],
             "quarantined_passages": len(passages) - len(safe),
             "privacy": {
@@ -542,6 +601,7 @@ class ResearchPipeline:
         recency_days: int | None,
         limit: int,
         allow_fallback: bool = True,
+        fallback_budget: _SearchFallbackBudget | None = None,
         interleave: bool = False,
         deadline_at: float | None = None,
         groups_out: list[list[SearchResult]] | None = None,
@@ -553,7 +613,7 @@ class ResearchPipeline:
                     language=language,
                     recency_days=recency_days,
                     limit=limit,
-                    allow_fallback=allow_fallback,
+                    allow_fallback=allow_fallback and fallback_budget is None,
                 )
             )
             for query in queries
@@ -583,6 +643,42 @@ class ResearchPipeline:
                     }
                 )
                 groups.append([])
+        if allow_fallback and fallback_budget is not None:
+            for empty_index, group in enumerate(groups):
+                if group:
+                    continue
+                fallback_query = _fallback_search_query(queries[empty_index])
+                if fallback_query.casefold() == queries[empty_index].casefold():
+                    continue
+                if not fallback_budget.claim():
+                    break
+                try:
+                    remaining = (
+                        None if deadline_at is None else max(0.0, deadline_at - time.monotonic())
+                    )
+                    operation = self._search_cached(
+                        fallback_query,
+                        language=language,
+                        recency_days=recency_days,
+                        limit=limit,
+                        allow_fallback=False,
+                    )
+                    groups[empty_index] = (
+                        await operation
+                        if remaining is None
+                        else await asyncio.wait_for(operation, timeout=remaining)
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    failures.append(
+                        {
+                            "stage": "search",
+                            "query_hash": query_fingerprint(fallback_query),
+                            "error": type(exc).__name__,
+                        }
+                    )
+                break
         if groups_out is not None:
             groups_out.extend(groups)
         results = (
@@ -645,6 +741,9 @@ class ResearchPipeline:
         recently_failed: list[SearchResult] = []
         preserved = preserve_failed or set()
         for candidate in candidates:
+            if has_sensitive_query(candidate.url):
+                healthy.append(candidate)
+                continue
             key = self._page_key(candidate.url)
             failure = self.cache.get("failures", key)
             if not isinstance(failure, dict):
@@ -713,7 +812,7 @@ class ResearchPipeline:
                     failures.append(
                         {
                             "stage": "fetch_or_extract",
-                            "url": candidate.url,
+                            "url": redact_url(candidate.url),
                             "error": "ResearchDeadlineExceeded",
                         }
                     )
@@ -724,7 +823,7 @@ class ResearchPipeline:
                     failures.append(
                         {
                             "stage": "fetch_or_extract",
-                            "url": candidate.url,
+                            "url": redact_url(candidate.url),
                             "error": type(exc).__name__,
                         }
                     )
@@ -734,7 +833,7 @@ class ResearchPipeline:
                     failures.append(
                         {
                             "stage": "deduplication",
-                            "url": candidate.url,
+                            "url": redact_url(candidate.url),
                             "error": "duplicate_content",
                         }
                     )
@@ -796,14 +895,23 @@ class ResearchPipeline:
         if not await self._robots_allowed(result.url):
             raise FetchError("robots.txt disallows retrieval")
         page_key = self._page_key(result.url)
+        request_sensitive = has_sensitive_query(result.url)
+        fetched: FetchResult | None = None
         try:
-            cached_failure = self.cache.get("failures", page_key)
+            cached_failure = None if request_sensitive else self.cache.get("failures", page_key)
             if isinstance(cached_failure, dict) and cached_failure.get("stage") == "extraction":
                 raise ExtractionError("recent cached extraction failure")
             fetched = await self._fetch_cached(result.url)
             page = self._extract_cached(fetched)
         except (FetchError, ExtractionError) as exc:
-            if isinstance(exc, ExtractionError):
+            fetch_sensitive = bool(
+                fetched
+                and (
+                    has_sensitive_query(fetched.requested_url)
+                    or has_sensitive_query(fetched.final_url)
+                )
+            )
+            if isinstance(exc, ExtractionError) and not request_sensitive and not fetch_sensitive:
                 self._cache_put(
                     "failures",
                     page_key,
@@ -815,24 +923,40 @@ class ResearchPipeline:
             try:
                 fetched = await self.browser.fetch(result.url)
                 page = self._extract_cached(fetched)
-                self._cache_put("pages", page_key, fetched.model_dump(mode="json"))
-            except ExtractionError as browser_exc:
-                self._cache_put(
-                    "failures",
-                    page_key,
-                    {"error": type(browser_exc).__name__, "stage": "extraction"},
-                    minutes=5,
+                browser_sensitive = (
+                    request_sensitive
+                    or has_sensitive_query(fetched.requested_url)
+                    or has_sensitive_query(fetched.final_url)
                 )
+                if not browser_sensitive:
+                    self._cache_put("pages", page_key, fetched.model_dump(mode="json"))
+            except ExtractionError as browser_exc:
+                browser_sensitive = request_sensitive or bool(
+                    fetched
+                    and (
+                        has_sensitive_query(fetched.requested_url)
+                        or has_sensitive_query(fetched.final_url)
+                    )
+                )
+                if not browser_sensitive:
+                    self._cache_put(
+                        "failures",
+                        page_key,
+                        {"error": type(browser_exc).__name__, "stage": "extraction"},
+                        minutes=5,
+                    )
                 raise
-            self.cache.delete("failures", page_key)
+            if not request_sensitive:
+                self.cache.delete("failures", page_key)
         passages = self.reranker.rank_for_queries(relevance_queries, chunk_text(page.text))[:8]
+        absolute_relevance = _absolute_source_relevance(result, relevance_queries, passages)
         quality = 0.65 * result.preliminary_score + 0.35 * freshness_score(
             page.updated_at or page.published_at, time_sensitive=plan.time_sensitive
         )
         source = SourceRecord(
             source_id=f"src_{index:03d}",
-            url=page.url,
-            title=page.title,
+            url=redact_url(page.url),
+            title=_redact_possible_url(page.title),
             domain=urlsplit(page.url).hostname or result.domain,
             published_at=page.published_at,
             updated_at=page.updated_at,
@@ -840,9 +964,11 @@ class ResearchPipeline:
             source_type=source_type(page.url),
             quality_score=round(quality, 4),
             quality_explanation=explain_source_quality(
-                result, dated=bool(page.updated_at or page.published_at)
+                result,
+                query=query,
+                dated=bool(page.updated_at or page.published_at),
             ),
-            relevance_score=passages[0].relevance_score if passages else 0.0,
+            relevance_score=absolute_relevance,
             fetch_method=fetched.method,
             content_hash=page.content_hash,
         )
@@ -916,7 +1042,7 @@ class ResearchPipeline:
     ) -> list[SearchResult]:
         key = Cache.key(
             {
-                "query": query,
+                "query_fingerprint": query_fingerprint(query),
                 "language": language,
                 "recency_days": recency_days,
                 "limit": limit,
@@ -963,7 +1089,7 @@ class ResearchPipeline:
                 results = await self._backend_search(
                     fallback, language=language, recency_days=recency_days, limit=limit
                 )
-        if results:
+        if results and not any(has_sensitive_query(result.url) for result in results):
             self._cache_put(
                 "search",
                 key,
@@ -992,6 +1118,8 @@ class ResearchPipeline:
                 self._last_search_at = time.monotonic()
 
     async def _fetch_cached(self, url: str) -> FetchResult:
+        if has_sensitive_query(url):
+            return await self.fetcher.fetch(url)
         key = self._page_key(url)
         cached = self.cache.get("pages", key)
         if isinstance(cached, dict):
@@ -1024,10 +1152,14 @@ class ResearchPipeline:
                 minutes=5,
             )
             raise
+        if has_sensitive_query(result.requested_url) or has_sensitive_query(result.final_url):
+            return result
         self._cache_put("pages", key, result.model_dump(mode="json"))
         return result
 
     def _extract_cached(self, fetched: FetchResult) -> ExtractedPage:
+        if has_sensitive_query(fetched.requested_url) or has_sensitive_query(fetched.final_url):
+            return self.extractor.extract(fetched)
         key = self._page_key(fetched.final_url)
         cached = self.cache.get("extracted", key)
         if isinstance(cached, dict):
@@ -1196,6 +1328,108 @@ def _plan_compound_query(
     )
 
 
+def _ranking_queries(plan: QueryPlan, fallback: str) -> list[str]:
+    topics = [topic for topic in plan.topics if len(meaningful_tokens(topic)) >= 2]
+    if len(topics) <= 1:
+        return [fallback]
+    anchors = distinctive_query_tokens(fallback)
+    ordered_anchors = [
+        token.casefold()
+        for token in re.findall(r"[A-Za-z0-9./_-]+", fallback)
+        if token.casefold() in anchors
+    ]
+    contextualized = []
+    for topic in topics:
+        topic_anchors = anchors & set(meaningful_tokens(topic))
+        if topic_anchors or not _facet_needs_anchor_context(topic):
+            contextualized.append(topic)
+        else:
+            contextualized.append(" ".join([*ordered_anchors, topic]))
+    return _unique_queries(contextualized)[:4]
+
+
+def _facet_needs_anchor_context(topic: str) -> bool:
+    if re.search(
+        r"\b(?:it|its|itself|they|their|them|those|these|former|latter|same|such)\b",
+        topic,
+        re.IGNORECASE,
+    ):
+        return True
+    if not re.match(
+        r"^(?:(?:what|which)\s+(?:is|are|was|were|does|do)|how\s+many)\b",
+        topic.strip(),
+        re.IGNORECASE,
+    ):
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z0-9.+#-]*", topic)
+    question_words = {"how", "what", "which"}
+    named_subject = any(
+        word.casefold() not in question_words
+        and (word.isupper() or (word[0].isupper() and not word.islower()))
+        for word in words[1:]
+    )
+    return not named_subject
+
+
+def _is_query_aligned_primary(query: str, result: SearchResult) -> bool:
+    kind = source_type(result.url)
+    if kind not in {"official_documentation", "primary_institution", "source_repository"}:
+        return False
+    query_terms = set(meaningful_tokens(query))
+    content = f"{result.title} {result.snippet}"
+    matched_terms = query_terms & set(meaningful_tokens(content))
+    if len(matched_terms) < min(2, len(query_terms)):
+        return False
+    generic_intent_terms = {
+        "documentation",
+        "find",
+        "github",
+        "official",
+        "page",
+        "reference",
+        "repository",
+        "source",
+        "website",
+    }
+    subject_terms = query_terms - generic_intent_terms
+    if subject_terms and not subject_terms & matched_terms:
+        return False
+    anchors = distinctive_query_tokens(query)
+    if anchors and distinctive_anchor_coverage(query, content) <= 0.0:
+        return False
+    score = score_search_result(query, result)
+    if domain_matches_authority(query, result.url):
+        return score >= 0.30
+    return kind == "primary_institution" and score >= 0.55
+
+
+def _absolute_source_relevance(
+    result: SearchResult, queries: list[str], passages: list[Passage]
+) -> float:
+    if not passages:
+        return 0.0
+    best_score = 0.0
+    for query in queries or [""]:
+        terms = set(meaningful_tokens(query))
+        if not terms:
+            continue
+        anchors = distinctive_query_tokens(query)
+        required_coverage = 1.0 if len(terms) <= 2 else 0.34
+        for passage in passages:
+            passage_text = f"{passage.heading or ''} {passage.text}"
+            passage_terms = set(meaningful_tokens(passage_text))
+            coverage = len(terms & passage_terms) / max(1, len(terms))
+            if coverage < required_coverage:
+                continue
+            anchor_coverage = distinctive_anchor_coverage(query, passage_text) if anchors else 0.0
+            if anchors and anchor_coverage <= 0.0:
+                continue
+            prior_lift = result.preliminary_score * min(1.0, coverage / 0.60)
+            score = 0.70 * coverage + 0.20 * prior_lift + 0.10 * anchor_coverage
+            best_score = max(best_score, score)
+    return round(min(1.0, best_score), 4)
+
+
 def _domain_matches(domain: str, patterns: Iterable[str]) -> bool:
     normalized = domain.lower().rstrip(".")
     return any(
@@ -1203,6 +1437,10 @@ def _domain_matches(domain: str, patterns: Iterable[str]) -> bool:
         or normalized.endswith(f".{pattern.lower().lstrip('.')}")
         for pattern in patterns
     )
+
+
+def _redact_possible_url(value: str) -> str:
+    return redact_url(value) if urlsplit(value).scheme in {"http", "https"} else value
 
 
 def _fallback_search_query(query: str) -> str:
@@ -1264,7 +1502,7 @@ def _build_search_snippets(
                 snippet_id=f"search_{index:03d}",
                 rank=candidate.rank if query_role == "exact" and candidate.rank else rank,
                 query_role=query_role,
-                url=candidate.url,
+                url=redact_url(candidate.url),
                 title=title,
                 text=text,
                 domain=candidate.domain or (urlsplit(candidate.url).hostname or ""),

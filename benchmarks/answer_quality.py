@@ -31,8 +31,14 @@ def score_result(item: dict[str, Any], mode: str, result: dict[str, Any]) -> dic
         for source in sources
         if isinstance(source, dict) and source.get("source_id")
     }
+    source_domains = {
+        str(source.get("source_id")): _source_domain(source)
+        for source in sources
+        if isinstance(source, dict) and source.get("source_id")
+    }
 
     contexts: list[dict[str, Any]] = []
+    context_domains: list[str] = []
     if mode == "raw_searxng":
         for source in sources:
             if not isinstance(source, dict):
@@ -47,6 +53,7 @@ def score_result(item: dict[str, Any], mode: str, result: dict[str, Any]) -> dic
                         "kind": "snippet",
                     }
                 )
+                context_domains.append(_source_domain(source))
     else:
         for snippet in snippets:
             if not isinstance(snippet, dict) or snippet.get("injection_risk") == "high":
@@ -68,6 +75,7 @@ def score_result(item: dict[str, Any], mode: str, result: dict[str, Any]) -> dic
                         "kind": "snippet",
                     }
                 )
+                context_domains.append(_source_domain(snippet))
         for record in evidence:
             if not isinstance(record, dict):
                 continue
@@ -99,6 +107,7 @@ def score_result(item: dict[str, Any], mode: str, result: dict[str, Any]) -> dic
                         "kind": "evidence",
                     }
                 )
+                context_domains.append(source_domains.get(source_id, ""))
 
     assertion_rows: list[dict[str, object]] = []
     for assertion in item["assertions"]:
@@ -126,9 +135,12 @@ def score_result(item: dict[str, Any], mode: str, result: dict[str, Any]) -> dic
     fact_precision = fact_contexts / max(1, len(contexts))
     preferred_source_hit = float(
         any(
-            _preferred_domain(_source_domain(source), item["preferred_domains"])
-            for source in sources + snippets
-            if isinstance(source, dict)
+            _preferred_domain(context_domains[index], item["preferred_domains"])
+            and any(
+                _matches_any(context["text"], assertion["patterns"])
+                for assertion in item["assertions"]
+            )
+            for index, context in enumerate(contexts)
         )
     )
 
@@ -177,11 +189,21 @@ def score_result(item: dict[str, Any], mode: str, result: dict[str, Any]) -> dic
 
 
 async def evaluate(
-    limit: int | None, run_timeout: float, max_sources: int, repeats: int, seed: int
+    limit: int | None,
+    run_timeout: float,
+    max_sources: int,
+    repeats: int,
+    seed: int,
+    question_ids: set[str] | None = None,
 ) -> None:
     questions: list[dict[str, Any]] = json.loads(
         Path("benchmarks/answer_quality_questions.json").read_text(encoding="utf-8")
     )
+    if question_ids:
+        questions = [item for item in questions if str(item["id"]) in question_ids]
+        missing = question_ids - {str(item["id"]) for item in questions}
+        if missing:
+            raise ValueError(f"unknown question id(s): {', '.join(sorted(missing))}")
     if limit:
         questions = questions[:limit]
     random.Random(seed).shuffle(questions)  # noqa: S311 - deterministic benchmark ordering.
@@ -312,6 +334,17 @@ def _write_outputs(
             )
             + " |"
         )
+    latency_rows: list[str] = []
+    for mode in report_modes:
+        mode_runs = grouped[mode]
+        first_runs = [run for run in mode_runs if int(run.get("repeat", 1)) == 1]
+        later_runs = [run for run in mode_runs if int(run.get("repeat", 1)) > 1]
+        latency_rows.append(
+            f"| {mode} | {_elapsed_mean(first_runs, 'elapsed')} | "
+            f"{_elapsed_mean(later_runs, 'elapsed')} | "
+            f"{_elapsed_mean(first_runs, 'end_to_end_elapsed')} | "
+            f"{_elapsed_mean(later_runs, 'end_to_end_elapsed')} |"
+        )
     detail_rows = [
         f"| {run['question_id']} | {run['mode']} | {run['metrics']['fact_recall']:.2f} | "
         f"{run['metrics']['fact_bearing_context_precision']:.2f} | "
@@ -337,6 +370,17 @@ The composite is: 55% gold-fact recall, 15% fact-bearing-context precision, 15% 
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 {chr(10).join(aggregate_rows)}
 
+## First/later repeat retrieval profile
+
+"First repeat" is the first hybrid retrieval for each frozen question snapshot; later
+repeats reuse the process-local search/page cache. Estimated end-to-end time adds the
+measured shared exact-snapshot lookup to each system so the raw baseline is not given a
+free search. This table avoids presenting their mixture as a pure cold or warm latency.
+
+| Mode | First-repeat post-snapshot s | Later-repeat post-snapshot s | First-repeat estimated end-to-end s | Later-repeat estimated end-to-end s |
+|---|---:|---:|---:|---:|
+{chr(10).join(latency_rows)}
+
 ## Per question
 
 | Question | Mode | Fact recall | Fact-context precision | Preferred source | Evidence citation integrity | Context traceability | Readiness /100 | Post-snapshot s | End-to-end retrieval s | Error |
@@ -350,6 +394,12 @@ Full assertion hits, excerpts, source metadata, and failures are written to the 
 
 def _mean(runs: list[dict[str, Any]], key: str, *, digits: int = 4) -> str:
     return f"{statistics.mean(float(run['metrics'][key]) for run in runs):.{digits}f}"
+
+
+def _elapsed_mean(runs: list[dict[str, Any]], key: str) -> str:
+    if not runs:
+        return "—"
+    return f"{statistics.mean(float(run.get(key, run['elapsed'])) for run in runs):.2f}"
 
 
 def _matches_any(text: str, patterns: list[str]) -> bool:
@@ -372,6 +422,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-sources", type=int, default=8)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--question-id", action="append", dest="question_ids")
     parser.add_argument("--rescore-only", action="store_true")
     arguments = parser.parse_args()
     if arguments.rescore_only:
@@ -384,5 +435,6 @@ if __name__ == "__main__":
                 arguments.max_sources,
                 max(1, arguments.repeats),
                 arguments.seed,
+                set(arguments.question_ids or []),
             )
         )

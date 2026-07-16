@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from app import PROJECT_NAME, __version__
 from app.dashboard.routes import create_dashboard_router
+from app.lifecycle import managed_http_lifespan
 from app.logging_config import configure_logging
 from app.mcp_server import create_mcp_server
 from app.runtime import create_runtime
@@ -19,7 +20,11 @@ mcp = create_mcp_server(runtime)
 
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    async with mcp.session_manager.run():
+    async with managed_http_lifespan(
+        mcp,
+        runtime.database,
+        runtime.settings.cache_retention_days,
+    ):
         yield
 
 

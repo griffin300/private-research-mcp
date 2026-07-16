@@ -1,3 +1,6 @@
+import asyncio
+import contextlib
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -5,10 +8,20 @@ import pytest
 from app.config import Settings
 from app.models import SearchMode
 from app.orchestration.budgets import budget_for
+from app.runtime import create_runtime
 from app.storage.cache import Cache
 from app.storage.database import Database
 from app.storage.migrations import migrate
-from app.storage.retention import clean_expired
+from app.storage.retention import clean_expired, run_retention_cleanup
+
+
+def _insert_request(database: Database, request_id: str, created_at: str) -> None:
+    database.execute(
+        "INSERT INTO requests "
+        "(request_id, query_hash, raw_query, created_at, duration_ms, source_count, "
+        "evidence_count, coverage_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (request_id, "opaque-fingerprint", None, created_at, 1, 1, 1, 1.0),
+    )
 
 
 def test_strict_mode_rejects_same_proxy() -> None:
@@ -68,12 +81,131 @@ def test_migration_adds_request_metrics_to_existing_database(tmp_path) -> None:
 def test_retention_removes_expired_evidence_index(tmp_path) -> None:
     database = Database(tmp_path / "retention.db")
     database.initialize()
-    expired = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    now = datetime.now(UTC)
+    expired = (now - timedelta(days=1)).isoformat()
+    fresh = (now + timedelta(days=1)).isoformat()
+    old = (now - timedelta(days=8)).isoformat()
+    _insert_request(database, "old-request", old)
+    _insert_request(database, "fresh-request", now.isoformat())
+    database.execute(
+        "INSERT INTO cache_entries VALUES (?, ?, ?, ?, ?)",
+        ("search", "old", "{}", old, fresh),
+    )
+    database.execute(
+        "INSERT INTO cache_entries VALUES (?, ?, ?, ?, ?)",
+        ("search", "fresh", "{}", now.isoformat(), fresh),
+    )
     database.execute("INSERT INTO evidence_records VALUES (?, ?)", ("req:ev_001", expired))
+    database.execute("INSERT INTO evidence_records VALUES (?, ?)", ("req:ev_002", fresh))
     database.execute(
         "INSERT INTO evidence_fts(evidence_id, source_id, heading, text) VALUES (?, ?, ?, ?)",
         ("req:ev_001", "src_001", "Heading", "Evidence"),
     )
-    clean_expired(database, 7)
+    database.execute(
+        "INSERT INTO evidence_fts(evidence_id, source_id, heading, text) VALUES (?, ?, ?, ?)",
+        ("req:ev_002", "src_002", "Heading", "Fresh evidence"),
+    )
+    database.execute(
+        "INSERT INTO evidence_fts(evidence_id, source_id, heading, text) VALUES (?, ?, ?, ?)",
+        ("orphan", "src_003", "Heading", "Orphaned evidence"),
+    )
+    assert clean_expired(database, 7) == 1
+    assert database.query_all("SELECT request_id FROM requests") == [("fresh-request",)]
+    assert database.query_all("SELECT cache_key FROM cache_entries") == [("fresh",)]
+    assert database.query_all("SELECT record_id FROM evidence_records") == [("req:ev_002",)]
+    assert database.query_all("SELECT evidence_id FROM evidence_fts") == [("req:ev_002",)]
+
+
+def test_retention_enables_secure_delete_and_truncates_wal(tmp_path) -> None:
+    path = tmp_path / "physical-retention.db"
+    database = Database(path)
+    database.initialize()
+    wal_path = path.with_name(f"{path.name}-wal")
+    old = (datetime.now(UTC) - timedelta(days=8)).isoformat()
+
+    # Keep one connection open so SQLite leaves the WAL file present and the
+    # cleanup checkpoint can be observed directly.
+    with contextlib.closing(sqlite3.connect(path)) as keeper:
+        keeper.execute("PRAGMA journal_mode=WAL")
+        _insert_request(database, "physical-old-request", old)
+        assert database.query_one("PRAGMA secure_delete") == (1,)
+        assert wal_path.exists() and wal_path.stat().st_size > 0
+
+        clean_expired(database, 7)
+
+        assert wal_path.exists() and wal_path.stat().st_size == 0
+
+
+def test_zero_retention_purges_existing_data_and_blocks_query_derived_writes(tmp_path) -> None:
+    path = tmp_path / "zero-retention.db"
+    existing = Database(path)
+    existing.initialize()
+    _insert_request(existing, "existing", datetime.now(UTC).isoformat())
+    existing.execute(
+        "INSERT INTO cache_entries VALUES (?, ?, ?, ?, ?)",
+        (
+            "search",
+            "existing",
+            "{}",
+            datetime.now(UTC).isoformat(),
+            (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+        ),
+    )
+    future = (datetime.now(UTC) + timedelta(days=30)).isoformat()
+    existing.execute("INSERT INTO evidence_records VALUES (?, ?)", ("existing:ev_001", future))
+    existing.execute(
+        "INSERT INTO evidence_fts(evidence_id, source_id, heading, text) VALUES (?, ?, ?, ?)",
+        ("existing:ev_001", "src_001", "Heading", "Previously retained evidence"),
+    )
+
+    runtime = create_runtime(
+        Settings(
+            privacy_mode="development",
+            database_path=path,
+            cache_retention_days=0,
+        )
+    )
+    database = runtime.database
+    _insert_request(database, "blocked", datetime.now(UTC).isoformat())
+    Cache(database).put("search", "blocked", {"query": "sensitive"}, timedelta(days=1))
+    database.execute_many(
+        "INSERT OR REPLACE INTO evidence_records VALUES (?, ?)",
+        [("blocked:ev_001", (datetime.now(UTC) + timedelta(days=1)).isoformat())],
+    )
+    database.execute_many(
+        "INSERT INTO evidence_fts(evidence_id, source_id, heading, text) VALUES (?, ?, ?, ?)",
+        [("blocked:ev_001", "src_001", "Heading", "Sensitive evidence")],
+    )
+
+    assert database.query_one("SELECT count(*) FROM requests")[0] == 0
+    assert database.query_one("SELECT count(*) FROM cache_entries")[0] == 0
     assert database.query_one("SELECT count(*) FROM evidence_records")[0] == 0
     assert database.query_one("SELECT count(*) FROM evidence_fts")[0] == 0
+    assert database.query_one("PRAGMA freelist_count") == (0,)
+    assert b"Previously retained evidence" not in path.read_bytes()
+    wal_path = path.with_name(f"{path.name}-wal")
+    assert not wal_path.exists() or wal_path.stat().st_size == 0
+
+
+@pytest.mark.asyncio
+async def test_periodic_retention_cleans_rows_added_after_startup(tmp_path) -> None:
+    database = Database(tmp_path / "periodic-retention.db")
+    database.initialize()
+    cleanup = asyncio.create_task(
+        run_retention_cleanup(database, 7, interval_seconds=0.01)
+    )
+    try:
+        _insert_request(
+            database,
+            "added-after-startup",
+            (datetime.now(UTC) - timedelta(days=8)).isoformat(),
+        )
+        for _ in range(50):
+            if database.query_one("SELECT count(*) FROM requests")[0] == 0:
+                break
+            await asyncio.sleep(0.01)
+        assert database.query_one("SELECT count(*) FROM requests")[0] == 0
+    finally:
+        cleanup.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await cleanup

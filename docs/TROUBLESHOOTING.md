@@ -12,6 +12,8 @@ docker compose logs --tail 200 app tor-search tor-fetch
 
 `uv` is not required on the host. Docker Desktop must be running Linux containers. A generated `SEARXNG_SECRET` must exist in `.env`.
 
+The loopback MCP bridge follows app-container IP changes automatically. If the endpoint becomes unhealthy after an app replacement, inspect `docker compose logs mcp-bridge` and verify the bridge still has only `internal_private` plus `host_loopback`; do not connect it to an egress network as a workaround.
+
 ## Search failures
 
 Check `search_status`. Search proxy and SearXNG failures are distinct. SearXNG container logs are deliberately disabled because engine errors can include query URLs. Engine CAPTCHA/rate-limit failures are expected occasionally; the pipeline rotates queries but does not bypass CAPTCHAs. If Tor is down, failure is intentional and direct egress is never tried.

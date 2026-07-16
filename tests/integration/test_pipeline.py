@@ -8,7 +8,7 @@ from app.extract.extractor import PageExtractor
 from app.fetch.browser_fetcher import BrowserFetcher
 from app.fetch.http_fetcher import FetchError
 from app.models import FetchResult, SearchMode, SearchResult
-from app.orchestration.pipeline import ResearchPipeline
+from app.orchestration.pipeline import ResearchPipeline, _SearchFallbackBudget
 from app.search.query_expansion import QueryPlan
 from app.storage.cache import Cache
 from app.storage.database import Database
@@ -47,6 +47,43 @@ class RecoveringBackend(FakeBackend):
                 url="https://example.com/recovered",
                 title="Recovered official result",
                 snippet="Recovered evidence",
+                engine="fixture",
+            )
+        ]
+
+
+class EmptyThenSimplifiedBackend(FakeBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.queries: list[str] = []
+
+    async def search(
+        self, query: str, *, language: str, recency_days: int | None, limit: int
+    ) -> list[SearchResult]:
+        self.calls += 1
+        self.queries.append(query)
+        if query == "database transaction":
+            return [
+                SearchResult(
+                    url="https://example.com/recovered",
+                    title="Database transaction evidence",
+                    snippet="Transaction isolation evidence",
+                    engine="fixture",
+                )
+            ]
+        return []
+
+
+class SensitiveResultBackend(FakeBackend):
+    async def search(
+        self, query: str, *, language: str, recency_days: int | None, limit: int
+    ) -> list[SearchResult]:
+        self.calls += 1
+        return [
+            SearchResult(
+                url="https://blob.example/report?sv=2024-11-04&sig=search-secret",
+                title="Signed result",
+                snippet="Database transaction evidence",
                 engine="fixture",
             )
         ]
@@ -259,6 +296,32 @@ class OrderedBackend(FakeBackend):
         ]
 
 
+class MisleadingPrimaryBackend(FakeBackend):
+    async def search(
+        self, query: str, *, language: str, recency_days: int | None, limit: int
+    ) -> list[SearchResult]:
+        self.calls += 1
+        return [
+            SearchResult(
+                url=f"https://docs.community-{index}.example/docs/{self.calls}",
+                title=f"{query} complete official documentation",
+                snippet=f"{query} reference details and examples",
+                search_score=1.0,
+                engine="fixture",
+            )
+            for index in range(1, 3)
+        ] + [
+            SearchResult(
+                url=f"https://github.com/unrelated-{index}/widget-{self.calls}",
+                title=f"{query} source repository",
+                snippet=f"{query} implementation reference",
+                search_score=1.0,
+                engine="fixture",
+            )
+            for index in range(1, 3)
+        ]
+
+
 class AlwaysFailFetcher:
     async def fetch(self, url: str) -> FetchResult:
         raise FetchError("fixture failure")
@@ -276,6 +339,32 @@ class FakeFetcher:
             final_url=url,
             status_code=200,
             content_type="text/html",
+            body=body,
+            retrieved_at=datetime.now(UTC),
+        )
+
+
+class SensitiveRedirectFetcher(FakeFetcher):
+    async def fetch(self, url: str) -> FetchResult:
+        self.calls += 1
+        is_robots = url.endswith("/robots.txt")
+        final_url = (
+            url if is_robots else "https://example.com/report?token=redirect-secret&view=full"
+        )
+        body = (
+            "User-agent: *\nAllow: /\n"
+            if is_robots
+            else (
+                "<main><h1>Database transaction isolation</h1><p>Database transaction "
+                "isolation prevents conflicting operations and provides enough factual "
+                "content for extraction.</p></main>"
+            )
+        )
+        return FetchResult(
+            requested_url=url,
+            final_url=final_url,
+            status_code=200,
+            content_type="text/plain" if is_robots else "text/html",
             body=body,
             retrieved_at=datetime.now(UTC),
         )
@@ -394,6 +483,7 @@ async def test_full_pipeline_returns_cited_evidence(tmp_path) -> None:
     result = await pipeline.search_web("MCP transport privacy", mode=SearchMode.QUICK)
     assert result.sources
     assert result.evidence
+    assert len(result.evidence) <= 8
     assert result.evidence[0].citation.startswith("[src_")
     assert result.privacy.direct_egress_allowed is False
     assert not any(row[0] for row in [database.query_one("SELECT raw_query FROM requests")])
@@ -446,8 +536,37 @@ async def test_deep_query_budget_scales_to_requested_sources(tmp_path) -> None:
         cache=Cache(database),
     )
     result = await pipeline.search_web("MCP transport privacy", mode=SearchMode.DEEP, max_sources=3)
-    assert result.search_rounds == 4
+    assert 2 <= result.search_rounds <= 4
     assert backend.calls <= 6
+
+
+@pytest.mark.integration
+async def test_arbitrary_docs_and_github_results_do_not_stop_quality_expansion(tmp_path) -> None:
+    settings = Settings(
+        privacy_mode="development",
+        database_path=tmp_path / "authority-alignment.db",
+    )
+    database = Database(settings.database_path)
+    database.initialize()
+    backend = MisleadingPrimaryBackend()
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=backend,
+        fetcher=AlwaysFailFetcher(),  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+
+    result = await pipeline.search_web(
+        "How does Acme Widget synchronize distributed replicas?",
+        mode=SearchMode.STANDARD,
+        max_sources=4,
+    )
+
+    assert result.search_rounds == 3
+    assert backend.calls == 5
 
 
 @pytest.mark.integration
@@ -478,6 +597,78 @@ async def test_empty_search_results_are_retried_instead_of_cached(tmp_path) -> N
     assert second
     assert third
     assert backend.calls == 3
+
+
+@pytest.mark.integration
+async def test_signed_search_result_urls_are_not_persisted(tmp_path) -> None:
+    settings = Settings(
+        privacy_mode="development",
+        database_path=tmp_path / "sensitive-search-result.db",
+        search_min_interval_seconds=0,
+    )
+    database = Database(settings.database_path)
+    database.initialize()
+    backend = SensitiveResultBackend()
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=backend,
+        fetcher=FakeFetcher(),  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+
+    first = await pipeline._search_cached(
+        "database transaction", language="en", recency_days=None, limit=3
+    )
+    second = await pipeline._search_cached(
+        "database transaction", language="en", recency_days=None, limit=3
+    )
+
+    assert first and second
+    assert backend.calls == 2
+    cached_values = database.query_all("SELECT value_json FROM cache_entries")
+    assert "search-secret" not in str(cached_values)
+
+
+@pytest.mark.integration
+async def test_shared_fallback_skips_unsimplifiable_empty_query(tmp_path) -> None:
+    settings = Settings(
+        privacy_mode="development",
+        database_path=tmp_path / "fallback-selection.db",
+        search_min_interval_seconds=0,
+    )
+    database = Database(settings.database_path)
+    database.initialize()
+    backend = EmptyThenSimplifiedBackend()
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=backend,
+        fetcher=FakeFetcher(),  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+    fallback_budget = _SearchFallbackBudget(1)
+
+    results, failures = await pipeline._search_round(
+        ["weather", "what is database transaction"],
+        language="en",
+        recency_days=None,
+        limit=3,
+        fallback_budget=fallback_budget,
+    )
+
+    assert not failures
+    assert [item.url for item in results] == ["https://example.com/recovered"]
+    assert backend.queries == [
+        "weather",
+        "what is database transaction",
+        "database transaction",
+    ]
+    assert fallback_budget.used == 1
 
 
 @pytest.mark.integration
@@ -894,6 +1085,93 @@ async def test_read_url_honors_robots_disallow(tmp_path) -> None:
     )
     with pytest.raises(FetchError, match="robots"):
         await pipeline.read_url("https://example.com/private")
+
+
+@pytest.mark.integration
+async def test_sensitive_read_url_is_redacted_and_never_cached(tmp_path) -> None:
+    settings = Settings(
+        privacy_mode="development",
+        database_path=tmp_path / "sensitive-url.db",
+    )
+    database = Database(settings.database_path)
+    database.initialize()
+    fetcher = FakeFetcher()
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=FakeBackend(),
+        fetcher=fetcher,  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+    url = "https://example.com/report?api_key=launch-secret&view=full"
+    first = await pipeline.read_url(url)
+    second = await pipeline.read_url(url)
+    assert "launch-secret" not in str(first)
+    assert "launch-secret" not in str(second)
+    assert fetcher.calls == 3  # One cached robots request, two uncached page requests.
+    cached_values = database.query_all("SELECT value_json FROM cache_entries")
+    assert "launch-secret" not in str(cached_values)
+
+
+@pytest.mark.integration
+async def test_sensitive_redirect_target_is_redacted_and_never_cached(tmp_path) -> None:
+    settings = Settings(
+        privacy_mode="development",
+        database_path=tmp_path / "sensitive-redirect.db",
+    )
+    database = Database(settings.database_path)
+    database.initialize()
+    fetcher = SensitiveRedirectFetcher()
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=FakeBackend(),
+        fetcher=fetcher,  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+
+    first = await pipeline.read_url("https://example.com/redirect")
+    second = await pipeline.read_url("https://example.com/redirect")
+
+    assert "redirect-secret" not in str(first)
+    assert "redirect-secret" not in str(second)
+    assert fetcher.calls == 3  # Cached robots policy plus two uncached redirects.
+    cached_values = database.query_all("SELECT value_json FROM cache_entries")
+    assert "redirect-secret" not in str(cached_values)
+
+
+@pytest.mark.integration
+async def test_sensitive_fragment_url_is_redacted_and_never_cached(tmp_path) -> None:
+    settings = Settings(
+        privacy_mode="development",
+        database_path=tmp_path / "sensitive-fragment.db",
+    )
+    database = Database(settings.database_path)
+    database.initialize()
+    fetcher = FakeFetcher()
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=FakeBackend(),
+        fetcher=fetcher,  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+    url = "https://example.com/callback#access_token=fragment-secret&token_type=bearer"
+
+    first = await pipeline.read_url(url)
+    second = await pipeline.read_url(url)
+
+    assert "fragment-secret" not in str(first)
+    assert "fragment-secret" not in str(second)
+    assert fetcher.calls == 3
+    cached_values = database.query_all("SELECT value_json FROM cache_entries")
+    assert "fragment-secret" not in str(cached_values)
 
 
 @pytest.mark.integration

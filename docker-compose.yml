@@ -153,6 +153,7 @@ services:
     depends_on:
       app:
         condition: service_healthy
+        restart: true
     read_only: true
     tmpfs:
       - /tmp:noexec,nosuid,size=8m

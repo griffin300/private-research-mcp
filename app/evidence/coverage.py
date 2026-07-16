@@ -22,7 +22,16 @@ def analyze_coverage(
         required = 1.0 if len(terms) <= 2 else 0.60
         (covered if best >= required else missing).append(topic)
     topic_score = len(covered) / max(1, len(topics))
-    diversity = min(1.0, len({source.domain for source in sources}) / 3)
+    evidence_sources = {
+        item.source_id for item in evidence if item.injection_risk != "high"
+    }
+    supported_sources = [
+        source
+        for source in sources
+        if source.source_id in evidence_sources and source.relevance_score >= 0.18
+    ]
+    supported_domains = {source.domain for source in supported_sources}
+    diversity = min(1.0, len(supported_domains) / 3)
     evidence_strength = min(1.0, len(evidence) / 8)
     score = round(0.55 * topic_score + 0.25 * diversity + 0.20 * evidence_strength, 3)
     status: Literal["insufficient", "weak", "moderate", "strong"]
@@ -35,8 +44,10 @@ def analyze_coverage(
     else:
         status = "insufficient"
     primary = any(
-        source.source_type in {"official_documentation", "primary_institution", "source_repository"}
-        for source in sources
+        source.relevance_score >= 0.25
+        and source.source_type
+        in {"official_documentation", "primary_institution", "source_repository"}
+        for source in supported_sources
     )
     return CoverageReport(
         score=score,
@@ -44,5 +55,5 @@ def analyze_coverage(
         covered_topics=covered,
         missing_topics=missing,
         primary_source_present=primary,
-        independent_source_count=len({source.domain for source in sources}),
+        independent_source_count=len(supported_domains),
     )

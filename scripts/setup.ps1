@@ -46,6 +46,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Stack startup failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Doctor checks failed.' }
 docker compose exec -T app python -m mcp_bridge.smoke_test
 if ($LASTEXITCODE -ne 0) { throw 'MCP smoke test failed.' }
+docker compose exec -T app python -m mcp_bridge.live_smoke_test --url http://127.0.0.1:8088/mcp/
+if ($LASTEXITCODE -ne 0) { throw 'Live search/read smoke test failed.' }
+docker compose exec -T app python -m mcp_bridge.compound_smoke_test --url http://127.0.0.1:8088/mcp/
+if ($LASTEXITCODE -ne 0) { throw 'Compound research smoke test failed.' }
 & "$PSScriptRoot\privacy-test.ps1"
 if ($LASTEXITCODE -ne 0) { throw 'Privacy checks failed.' }
 Write-Host 'Setup complete. Dashboard: http://127.0.0.1:8088/dashboard'

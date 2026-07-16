@@ -8,14 +8,14 @@ search:
   safe_search: 1
   autocomplete: ""
   ban_time_on_fail: 10
-  max_ban_time_on_fail: 60
+  max_ban_time_on_fail: 10
   suspended_times:
-    SearxEngineAccessDenied: 300
-    SearxEngineCaptcha: 600
-    SearxEngineTooManyRequests: 120
-    cf_SearxEngineCaptcha: 1800
-    cf_SearxEngineAccessDenied: 600
-    recaptcha_SearxEngineCaptcha: 1800
+    SearxEngineAccessDenied: 10
+    SearxEngineCaptcha: 120
+    SearxEngineTooManyRequests: 10
+    cf_SearxEngineCaptcha: 300
+    cf_SearxEngineAccessDenied: 120
+    recaptcha_SearxEngineCaptcha: 300
   formats:
     - html
     - json
@@ -50,9 +50,22 @@ outgoing:
   request_timeout: 15.0
   max_request_timeout: 30.0
   enable_http2: false
+  # Per-engine retries multiply one aggregate search into a burst of upstream
+  # attempts. The app instead retries the whole exact request once, and only
+  # after a transport failure or a completely empty degraded response.
+  retries: 0
+  keepalive_expiry: 3.0
+  using_tor_proxy: true
+  extra_proxy_timeout: 10
   proxies:
     all://:
-      - socks5h://tor-search:9050
+      # Static labels are circuit-isolation tokens, not credentials. SearXNG
+      # distributes engine requests round-robin; Tor's IsolateSOCKSAuth keeps
+      # those identities on separate circuits.
+      - socks5h://search-a:isolate-a@tor-search:9050
+      - socks5h://search-b:isolate-b@tor-search:9050
+      - socks5h://search-c:isolate-c@tor-search:9050
+      - socks5h://search-d:isolate-d@tor-search:9050
 
 ui:
   static_use_hash: true
