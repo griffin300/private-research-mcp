@@ -49,4 +49,4 @@ if ($LASTEXITCODE -ne 0) { throw 'MCP smoke test failed.' }
 & "$PSScriptRoot\privacy-test.ps1"
 if ($LASTEXITCODE -ne 0) { throw 'Privacy checks failed.' }
 Write-Host 'Setup complete. Dashboard: http://127.0.0.1:8088/dashboard'
-Write-Host 'LM Studio MCP URL: http://127.0.0.1:8088/mcp'
+Write-Host 'LM Studio MCP URL: http://127.0.0.1:8088/mcp/'

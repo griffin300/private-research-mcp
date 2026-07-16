@@ -69,7 +69,8 @@ Common commands:
 {
   "mcpServers": {
     "private-research": {
-      "url": "http://127.0.0.1:8088/mcp"
+      "url": "http://127.0.0.1:8088/mcp/",
+      "timeout": 300000
     }
   }
 }
@@ -111,7 +112,7 @@ PRM_ENABLE_BROWSER=false
 
 Strict mode refuses missing/shared proxies and never retries directly. `development` mode must be explicit and is not used by Docker Compose. An existing SearXNG can be selected with `PRM_SEARXNG_BASE_URL`, but it must still be reachable within the privacy topology for strict deployment.
 
-The default network timeout is 30 seconds because the quality-first configuration prefers waiting for useful Tor-routed sources over returning early. It remains bounded by `PRM_REQUEST_TIMEOUT_SECONDS`.
+Individual network operations have a 30-second timeout because the quality-first configuration prefers waiting for useful Tor-routed sources over returning early. A deep request can contain several such operations, so the LM Studio MCP entry uses a five-minute per-tool timeout. Both remain bounded.
 
 The optional enhanced planner accepts only a separate loopback/private/Docker-internal OpenAI-compatible endpoint. It falls back to deterministic planning on failure and rejects reuse of the primary LM Studio endpoint.
 
@@ -123,7 +124,7 @@ Tor is not perfect anonymity. Timing correlation, malicious exits, identifiable 
 
 ## Data and deletion
 
-SQLite and caches live in the `research-data` Docker volume. The normal log stream contains opaque request IDs, not raw queries. Call `clear_local_data` with `confirm: true` or remove project data and the volume explicitly:
+SQLite and caches live in the `research-data` Docker volume. URL-bearing HTTP client logs are suppressed, and SearXNG's Docker logging driver is disabled because engine errors can contain the query. The remaining normal log stream contains opaque request IDs, not raw queries. Call `clear_local_data` with `confirm: true` or remove project data and the volume explicitly:
 
 ```powershell
 docker compose down

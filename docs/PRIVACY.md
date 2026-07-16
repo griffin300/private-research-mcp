@@ -21,7 +21,7 @@ The `internal_private` network has `internal: true`. A minimal TCP sidecar expos
 
 ## Storage and logs
 
-The `research-data` volume contains SQLite caches/evidence. Default retention is seven days. Search history and raw query logs are off. Normal request records contain a short SHA-256 fingerprint and opaque request ID. Browser profiles/cookies are never persisted.
+The `research-data` volume contains SQLite caches/evidence. Default retention is seven days. Search history and raw query logs are off. URL-bearing HTTP client logs are suppressed, and SearXNG's Docker logging driver is disabled because engine failures can otherwise render the query URL. Normal request records contain a short SHA-256 fingerprint and opaque request ID. Browser profiles/cookies are never persisted.
 
 Use MCP `clear_local_data(confirm=true)` for selective deletion. To delete the entire volume, stop Compose and explicitly remove `private-research-mcp_research-data`.
 

@@ -11,8 +11,10 @@ def test_compose_contains_network_privacy_boundary() -> None:
     assert 'enable_ip_masquerade: "false"' in compose
     assert "tor-search" in compose and "tor-fetch" in compose
     app_block = compose.split("  app:", 1)[1].split("\n  mcp-bridge:", 1)[0]
+    searxng_block = compose.split("  searxng:", 1)[1].split("\n  browser-service:", 1)[0]
     assert "egress_search" not in app_block and "egress_fetch" not in app_block
     assert "ports:" not in app_block
+    assert 'driver: "none"' in searxng_block
 
 
 @pytest.mark.privacy

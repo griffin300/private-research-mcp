@@ -86,6 +86,18 @@ Test-Privacy 'Raw query logging disabled' {
     if ($LASTEXITCODE -ne 0) { throw 'could not read runtime setting' }
     if ($value -notmatch 'False') { throw 'raw query logging enabled' }
 }
+Test-Privacy 'Query-bearing SearXNG container logs are disabled' {
+    $container = Get-Container 'private-research-mcp-searxng-1'
+    if ($container.HostConfig.LogConfig.Type -ne 'none') {
+        throw "SearXNG logging driver is $($container.HostConfig.LogConfig.Type)"
+    }
+}
+Test-Privacy 'URL-bearing HTTP client logs are suppressed' {
+    $code = "import logging; from app.logging_config import configure_logging; configure_logging('INFO'); print(logging.getLogger('httpx').getEffectiveLevel(), logging.getLogger('httpcore').getEffectiveLevel())"
+    $value = docker compose exec -T app python -c $code
+    if ($LASTEXITCODE -ne 0) { throw 'could not inspect runtime logger levels' }
+    if ($value -notmatch '50 50') { throw "unsafe logger levels: $value" }
+}
 Test-Privacy 'No cloud API configuration' {
     $hits = rg -n -i 'api\.(openai|anthropic)\.com|api\.tavily\.com|api\.exa\.ai' app config docker-compose.yml .env.example
     if ($LASTEXITCODE -eq 0) { throw $hits }
@@ -102,7 +114,7 @@ Test-Privacy 'Direct public DNS resolution blocked from app' {
     if ($result -notmatch 'BLOCKED') { throw 'public DNS resolved outside SOCKS' }
 }
 $browserName = 'private-research-mcp-browser-service-1'
-$browserPresent = (docker ps -a --format '{{.Names}}') -contains $browserName
+$browserPresent = (docker ps --format '{{.Names}}') -contains $browserName
 if ($browserPresent) {
     Test-Privacy 'Browser only joins the internal network' {
         $container = Get-Container $browserName

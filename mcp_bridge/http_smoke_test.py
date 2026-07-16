@@ -35,7 +35,7 @@ async def smoke(url: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Smoke-test the Streamable HTTP MCP endpoint")
-    parser.add_argument("--url", default="http://127.0.0.1:8088/mcp")
+    parser.add_argument("--url", default="http://127.0.0.1:8088/mcp/")
     args = parser.parse_args()
     asyncio.run(smoke(args.url))
 

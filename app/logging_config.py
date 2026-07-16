@@ -30,3 +30,7 @@ def configure_logging(level: str) -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level.upper())
+    # httpx/httpcore render complete request URLs, including SearXNG's `q=` value.
+    # Application failures are recorded separately with opaque stages and error types.
+    for logger_name in ("httpx", "httpcore"):
+        logging.getLogger(logger_name).setLevel(logging.CRITICAL)

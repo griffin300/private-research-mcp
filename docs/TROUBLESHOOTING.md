@@ -7,14 +7,16 @@ Run `.\scripts\doctor.ps1` first.
 ```powershell
 docker compose config
 docker compose ps
-docker compose logs --tail 200 app searxng tor-search tor-fetch
+docker compose logs --tail 200 app tor-search tor-fetch
 ```
 
 `uv` is not required on the host. Docker Desktop must be running Linux containers. A generated `SEARXNG_SECRET` must exist in `.env`.
 
 ## Search failures
 
-Check `search_status`. Search proxy and SearXNG failures are distinct. SearXNG engine CAPTCHA/rate-limit failures are expected occasionally; the pipeline rotates queries but does not bypass CAPTCHAs. If Tor is down, failure is intentional and direct egress is never tried.
+Check `search_status`. Search proxy and SearXNG failures are distinct. SearXNG container logs are deliberately disabled because engine errors can include query URLs. Engine CAPTCHA/rate-limit failures are expected occasionally; the pipeline rotates queries but does not bypass CAPTCHAs. If Tor is down, failure is intentional and direct egress is never tried.
+
+LM Studio error `-32001` means its MCP client stopped waiting before the research server finished. Use the canonical `http://127.0.0.1:8088/mcp/` URL and set `"timeout": 300000` on the `private-research` entry in `mcp.json`. This is a per-tool timeout in milliseconds; it does not weaken the app's bounded per-network-operation timeouts.
 
 ## Fetch/extraction failures
 

@@ -45,6 +45,8 @@ services:
   searxng:
     <<: *security
     image: searxng/searxng:2026.7.10-4abac08de
+    logging:
+      driver: "none"
     depends_on:
       tor-search:
         condition: service_healthy
