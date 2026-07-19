@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from typing import Any
 
 from mcp import ClientSession
@@ -35,6 +36,11 @@ async def smoke(url: str) -> None:
                 raise RuntimeError(
                     f"live search returned no evidence; failures={search.get('failures')}"
                 )
+            search_chars = len(json.dumps(search, ensure_ascii=False))
+            if search.get("response_info", {}).get("detail") != "compact":
+                raise RuntimeError("live search did not return compact response detail")
+            if search_chars > 9_000:
+                raise RuntimeError(f"live quick response exceeded 9,000 chars: {search_chars}")
 
             read_result = await session.call_tool(
                 "read_url",
@@ -49,9 +55,17 @@ async def smoke(url: str) -> None:
             passages = read.get("passages", [])
             if not isinstance(passages, list) or not passages:
                 raise RuntimeError(f"live read returned no passages: {read}")
+            read_chars = len(json.dumps(read, ensure_ascii=False))
+            if read.get("response_info", {}).get("detail") != "compact":
+                raise RuntimeError("live read did not return compact response detail")
+            if read_chars > 10_000:
+                raise RuntimeError(f"live read exceeded 10,000 chars: {read_chars}")
 
-            print(f"PASS: search_web returned {len(evidence)} evidence passages")
-            print(f"PASS: read_url returned {len(passages)} ranked passages")
+            print(
+                f"PASS: search_web returned {len(evidence)} evidence passages "
+                f"in {search_chars} chars"
+            )
+            print(f"PASS: read_url returned {len(passages)} ranked passages in {read_chars} chars")
 
 
 def main() -> None:

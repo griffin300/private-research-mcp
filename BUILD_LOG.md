@@ -63,3 +63,13 @@
 - Built and started the optional browser profile, confirmed its only network is `internal_private`, blocked its direct public IP and DNS access, and completed a real Chromium render reported as Tor through `tor-fetch`.
 - The final local quality run passed Ruff formatting/linting, strict Mypy for 60 source files, and 44 Pytest unit/integration/security/privacy-static tests.
 - The final live privacy run, with the browser profile active, passed every check including browser isolation, distinct Tor exits, fail-closed transport shutdown, and recovery.
+
+## 2026-07-19 - Context-efficiency and response hardening
+
+- Traced excessive calling-model context use to the MCP presentation layer returning the complete internal research package, including repeated metadata, offsets, hashes, ranking diagnostics, engine lists, empty arrays, and duplicate failure rows.
+- Added compact, character-budgeted MCP responses by default while retaining exact citation strings and URLs, selected verified evidence, the exact-query result floor, coverage gaps, privacy status, and one centralized untrusted-content warning. Full internal responses remain explicitly opt-in for diagnostics and benchmark tooling.
+- Added Quick/Standard/Deep default response budgets of 9,000/14,000/28,000 characters and a 10,000-character `read_url` budget. Caller overrides from 4,000 to 50,000 characters are validated and the minimum budget is regression-tested.
+- Audited 18 saved real benchmark packages without issuing new web searches. Standard responses fell from a 25,854-character median to 13,152 (49.1% smaller); Quick-budget responses were 65.8% smaller. All 42 visible assertion hits, evidence records, snippets, and exact citations survived at every default budget, with zero budget overruns.
+- Response shaping measured 1.864 ms median and 3.560 ms p95 over 540 local calls, so it adds no meaningful retrieval latency while reducing downstream model prompt processing.
+- The final local regression suite passed all 166 tests; Ruff and strict Mypy also passed.
+- Rebuilt the live app and loopback MCP bridge; all five services returned healthy. Streamable HTTP initialization/status passed, and one bounded live smoke returned 4 evidence passages in 6,987 characters plus 3 ranked `read_url` passages in 4,279 characters, both within their configured budgets.

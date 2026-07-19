@@ -11,6 +11,7 @@ from pydantic import Field
 from app import PROJECT_NAME
 from app.logging_config import configure_logging
 from app.models import SearchMode
+from app.orchestration.response import read_response, research_response
 from app.orchestration.routing import select_search_mode
 from app.runtime import Runtime, create_runtime
 from app.storage.retention import run_retention_cleanup
@@ -40,8 +41,10 @@ def create_mcp_server(runtime: Runtime) -> FastMCP:
             "Prefer extracted evidence with source/evidence citations; use search_snippets only "
             "as explicitly unverified fallback context. When answering, cover every explicit "
             "part supported by the package and cite only exact citation strings that occur in "
-            "the returned evidence or snippets; never renumber or invent citations. Call "
-            "search_web once per coherent "
+            "the returned evidence or snippets; never renumber or invent citations. "
+            "Compact response mode is the default and omits internal scoring/debug fields; ask "
+            "for full response detail only when diagnosing the retrieval system. "
+            "Call search_web once per coherent "
             "question and wait for it to finish; do not concatenate independent search strings, "
             "send JSON query arrays, or launch duplicate searches concurrently. The server "
             "performs its own focused expansion and safely decomposes accidental query batches."
@@ -71,6 +74,18 @@ def create_mcp_server(runtime: Runtime) -> FastMCP:
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
         language: str = "en",
+        response_detail: Literal["compact", "full"] = "compact",
+        max_context_chars: Annotated[
+            int | None,
+            Field(
+                ge=4000,
+                le=50000,
+                description=(
+                    "Approximate maximum serialized characters returned in compact mode. "
+                    "Leave unset for the mode-specific quality-preserving default."
+                ),
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Search privately; answer every supported part using only exact returned citations."""
         selected_mode = select_search_mode(query) if mode == "auto" else SearchMode(mode)
@@ -85,7 +100,14 @@ def create_mcp_server(runtime: Runtime) -> FastMCP:
         )
         if mode == "auto":
             package.warnings.insert(0, f"Auto-selected {selected_mode.value} research mode.")
-        return package.model_dump(mode="json")
+        context_budget = max_context_chars or getattr(
+            runtime.settings, f"{selected_mode.value}_context_chars"
+        )
+        return research_response(
+            package,
+            detail=response_detail,
+            max_chars=context_budget,
+        )
 
     @server.tool()
     async def deep_research(
@@ -94,6 +116,11 @@ def create_mcp_server(runtime: Runtime) -> FastMCP:
         max_sources: int = 20,
         recency_days: int | None = None,
         research_depth: Literal["normal", "extensive"] = "normal",
+        response_detail: Literal["compact", "full"] = "compact",
+        max_context_chars: Annotated[
+            int | None,
+            Field(ge=4000, le=50000),
+        ] = None,
     ) -> dict[str, Any]:
         """Run multi-round research; answer supported parts with only exact returned citations."""
         package = await runtime.pipeline.deep_research(
@@ -103,12 +130,30 @@ def create_mcp_server(runtime: Runtime) -> FastMCP:
             recency_days=recency_days,
             research_depth=research_depth,
         )
-        return package.model_dump(mode="json")
+        return research_response(
+            package,
+            detail=response_detail,
+            max_chars=max_context_chars or runtime.settings.deep_context_chars,
+        )
 
     @server.tool()
-    async def read_url(url: str, question: str | None = None) -> dict[str, Any]:
+    async def read_url(
+        url: str,
+        question: str | None = None,
+        response_detail: Literal["compact", "full"] = "compact",
+        max_context_chars: Annotated[
+            int | None,
+            Field(ge=4000, le=50000),
+        ] = None,
+    ) -> dict[str, Any]:
         """Privately retrieve one safe HTTP(S) URL and return clean ranked passages."""
-        return await runtime.pipeline.read_url(url, question)
+        result = await runtime.pipeline.read_url(url, question)
+        return read_response(
+            result,
+            detail=response_detail,
+            max_chars=max_context_chars or runtime.settings.read_context_chars,
+            question=question,
+        )
 
     @server.tool()
     async def search_status() -> dict[str, Any]:

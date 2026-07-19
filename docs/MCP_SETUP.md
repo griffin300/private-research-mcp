@@ -23,6 +23,11 @@ In LM Studio 0.3.17+, open **Program → Install → Edit mcp.json** and merge:
 
 Do not add proxy credentials or secrets. Save and enable the server. Expected tools: `search_web`, `deep_research`, `read_url`, `search_status`, `clear_local_data`. First call `search_status`; expected service/database status is healthy and `unsafe_fallback_enabled` is false.
 
+`search_web`, `deep_research`, and `read_url` return compact context by default. Leave
+`max_context_chars` unset for the quality-preserving mode default. If a small local model still
+runs short of context, set 6,000–10,000 for a call; if a diagnostic needs offsets, scores, hashes,
+and all internal metadata, explicitly set `response_detail` to `full`.
+
 For production, disable any separate raw-SearXNG MCP entry in the same LM Studio configuration. Otherwise the model can bypass the private tool's batch repair, canonical-source routing, page verification, citation boundaries, deadlines, and query-conservation controls; the raw endpoint also gives it a second path with different privacy behavior.
 
 LM Studio currently uses Cursor-style `mcp.json` notation and supports local/remote MCP servers. Streamable HTTP is the production transport recommended by stable MCP Python SDK documentation.

@@ -6,7 +6,7 @@ Retrieval checks a same-origin `robots.txt` through the fetch Tor route, then tr
 
 SQLite uses WAL plus FTS5. Search responses, pages, evidence, and failure states have independent namespaces. Search history and useful short-term caching are separate controls.
 
-Evidence IDs are assigned only after prompt-injection screening. A citation includes its source/evidence IDs; structured records retain URL, title, passage, heading, offsets, retrieval time, and content hash. Offsets are character offsets into extracted text, never invented webpage line numbers.
+Evidence IDs are assigned only after prompt-injection screening. A citation includes its source/evidence IDs; internal structured records retain URL, title, passage, heading, offsets, retrieval time, and content hash. Offsets are character offsets into extracted text, never invented webpage line numbers. The MCP presentation layer returns a compact schema by default: exact citation strings and URLs remain intact, while internal offsets, hashes, repeated metadata, ranking scores, engine lists, and empty analysis fields stay out of the calling model's context. Full detail remains opt-in for diagnostics.
 
 For an ordinary question, the exact user query is searched first for up to 10 results. For an explicit batch, each repaired facet receives its own exact-result floor and those groups are interleaved. Safe-normalized results retain SearXNG order and are stored as unverified `search_snippets` with their original rank; only canonical-URL duplicates are removed. This immutable floor is scanned for prompt injection, with high-risk title/snippet text redacted before return, and survives even if every robots check, page fetch, or extraction fails. Expanded queries are additive and cannot evict exact-query snippets.
 
@@ -28,4 +28,4 @@ SearXNG keeps several independent general engines enabled and adds the `it`, `sc
 6. Extract metadata/main text; hash and semantically chunk it.
 7. Rank passages, quarantine injection-like instructions, build citations.
 8. Report coverage, primary-source presence, gaps, failures, and contradictions.
-9. Return structured JSON containing both unverified snippets and verified extracted evidence. Final prose synthesis remains the calling model's job.
+9. Fit verified evidence and the exact-query snippet floor into the mode-specific response budget, aggregate repetitive failures, and return compact structured JSON. Final prose synthesis remains the calling model's job; full internal JSON is opt-in for diagnostics.

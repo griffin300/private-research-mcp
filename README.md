@@ -82,9 +82,9 @@ For LM Studio API clients, enable **Allow calling servers from mcp.json** (LM St
 
 ## MCP tools and examples
 
-- `search_web`: quality-first `auto` search by default, with explicit quick/standard/deep overrides.
-- `deep_research`: multiple rounds, gaps, contradictions, source quality, unresolved questions.
-- `read_url`: safe retrieval and question-aware passage ranking for one URL.
+- `search_web`: quality-first `auto` search with compact, context-budgeted evidence by default.
+- `deep_research`: multiple rounds, gaps, contradictions, and a larger compact evidence budget.
+- `read_url`: safe retrieval with compact question-aware passages for one URL.
 - `search_status`: component health and unsafe-fallback state.
 - `clear_local_data`: deletes only project data and requires `confirm: true`.
 
@@ -93,6 +93,15 @@ Example arguments:
 ```json
 {"query":"What changed in Python MCP SDK 1.28?","mode":"auto","max_sources":8,"recency_days":90,"include_domains":["github.com"],"exclude_domains":[],"language":"en"}
 ```
+
+Search and read tools default to `response_detail: "compact"`. Compact responses preserve exact
+citation strings, source URLs, selected evidence, the exact-query snippet floor, coverage gaps,
+privacy status, and aggregated failures while omitting offsets, hashes, engine lists, empty
+support arrays, repeated source metadata, and internal ranking/debug fields. Mode defaults target
+9,000 characters for Quick, 14,000 for Standard, and 28,000 for Deep; `read_url` targets 10,000.
+Use `max_context_chars` (4,000–50,000) to override one call. Use
+`response_detail: "full"` only for retrieval diagnostics or benchmark tooling that needs the
+complete internal package.
 
 Every ordinary question first preserves up to 10 exact-query results in SearXNG order. An explicit machine-style batch (JSON array, labeled list, semicolon list, or several independent questions) is repaired into up to six facets, further bounded by the selected mode's query budget, with facet-exact results interleaved inside one shared search/fetch budget. Each facet's exact rank-one source is tried first; failed, duplicate, injected, or irrelevant pages are adaptively replaced for uncovered facets without exceeding the original page-attempt budget.
 
@@ -110,6 +119,10 @@ PRM_LOG_RAW_QUERIES=false
 PRM_ENABLE_EMBEDDINGS=false
 PRM_ENABLE_RERANKER=false
 PRM_ENABLE_BROWSER=false
+PRM_QUICK_CONTEXT_CHARS=9000
+PRM_STANDARD_CONTEXT_CHARS=14000
+PRM_DEEP_CONTEXT_CHARS=28000
+PRM_READ_CONTEXT_CHARS=10000
 ```
 
 Strict mode refuses missing/shared proxies and never retries directly. `development` mode must be explicit and is not used by Docker Compose. An existing SearXNG can be selected with `PRM_SEARXNG_BASE_URL`, but it must still be reachable within the privacy topology for strict deployment.
