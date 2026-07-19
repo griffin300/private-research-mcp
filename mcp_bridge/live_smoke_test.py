@@ -42,6 +42,19 @@ async def smoke(url: str) -> None:
             if search_chars > 9_000:
                 raise RuntimeError(f"live quick response exceeded 9,000 chars: {search_chars}")
 
+            repeated_result = await session.call_tool(
+                "search_web",
+                {
+                    "query": "Repeat the preceding search immediately",
+                    "mode": "quick",
+                },
+            )
+            if repeated_result.isError or repeated_result.structuredContent is None:
+                raise RuntimeError("repeat-search guard call failed")
+            repeated = _payload(repeated_result.structuredContent)
+            if repeated.get("status") != "repeated_search_suppressed":
+                raise RuntimeError("immediate repeated search was not suppressed")
+
             read_result = await session.call_tool(
                 "read_url",
                 {
@@ -65,6 +78,7 @@ async def smoke(url: str) -> None:
                 f"PASS: search_web returned {len(evidence)} evidence passages "
                 f"in {search_chars} chars"
             )
+            print("PASS: immediate repeated search was suppressed")
             print(f"PASS: read_url returned {len(passages)} ranked passages in {read_chars} chars")
 
 

@@ -98,10 +98,17 @@ Search and read tools default to `response_detail: "compact"`. Compact responses
 citation strings, source URLs, selected evidence, the exact-query snippet floor, coverage gaps,
 privacy status, and aggregated failures while omitting offsets, hashes, engine lists, empty
 support arrays, repeated source metadata, and internal ranking/debug fields. Mode defaults target
-9,000 characters for Quick, 14,000 for Standard, and 28,000 for Deep; `read_url` targets 10,000.
+9,000 characters for Quick, 10,000 for Standard, and 12,000 for Deep; `read_url` targets 8,000.
 Use `max_context_chars` (4,000–50,000) to override one call. Use
 `response_detail: "full"` only for retrieval diagnostics or benchmark tooling that needs the
 complete internal package.
+
+Interactive MCP searches return the best completed evidence within 105 seconds, even when the
+selected research mode has a larger internal deadline. The result explicitly directs the calling
+model to answer immediately rather than launching another search in the same turn. A five-second
+server-side guard suppresses an immediate duplicate or parallel search and returns a tiny control
+message instead. This prevents late and repeated tool output from consuming the model's remaining
+generation context.
 
 Every ordinary question first preserves up to 10 exact-query results in SearXNG order. An explicit machine-style batch (JSON array, labeled list, semicolon list, or several independent questions) is repaired into up to six facets, further bounded by the selected mode's query budget, with facet-exact results interleaved inside one shared search/fetch budget. Each facet's exact rank-one source is tried first; failed, duplicate, injected, or irrelevant pages are adaptively replaced for uncovered facets without exceeding the original page-attempt budget.
 
@@ -120,14 +127,16 @@ PRM_ENABLE_EMBEDDINGS=false
 PRM_ENABLE_RERANKER=false
 PRM_ENABLE_BROWSER=false
 PRM_QUICK_CONTEXT_CHARS=9000
-PRM_STANDARD_CONTEXT_CHARS=14000
-PRM_DEEP_CONTEXT_CHARS=28000
-PRM_READ_CONTEXT_CHARS=10000
+PRM_STANDARD_CONTEXT_CHARS=10000
+PRM_DEEP_CONTEXT_CHARS=12000
+PRM_READ_CONTEXT_CHARS=8000
+PRM_MCP_TOOL_DEADLINE_SECONDS=105
+PRM_MCP_REPEAT_SEARCH_COOLDOWN_SECONDS=5
 ```
 
 Strict mode refuses missing/shared proxies and never retries directly. `development` mode must be explicit and is not used by Docker Compose. An existing SearXNG can be selected with `PRM_SEARXNG_BASE_URL`, but it must still be reachable within the privacy topology for strict deployment.
 
-Each page I/O attempt has a 30-second timeout because the quality-first configuration prefers waiting for useful Tor-routed sources over returning early; one transient retry gives a logical page fetch a 60-second total bound. Robots checks use a separate 15-second wrapper, and deterministic failures are not retried. Quick/standard/deep requests have 90/240/720-second server deadlines and return completed exact results/evidence if a pathological tail reaches the bound. The LM Studio entry uses a 15-minute per-tool timeout as an outer backstop.
+Each page I/O attempt has a 30-second timeout because the quality-first configuration prefers waiting for useful Tor-routed sources over returning early; one transient retry gives a logical page fetch a 60-second total bound. Robots checks use a separate 15-second wrapper, and deterministic failures are not retried. Direct pipeline Quick/Standard/Deep runs retain 90/240/720-second research deadlines, while interactive MCP search tools use the smaller 105-second return deadline and package completed exact results/evidence if the tail is still pending. The LM Studio entry uses a 15-minute per-tool timeout only as an outer transport backstop.
 
 The optional enhanced planner accepts only a separate loopback/private/Docker-internal OpenAI-compatible endpoint. It falls back to deterministic planning on failure and rejects reuse of the primary LM Studio endpoint.
 

@@ -53,6 +53,19 @@ def test_search_budgets_are_configurable() -> None:
     assert (budget.queries, budget.pages, budget.browser_pages) == (2, 2, 1)
 
 
+def test_interactive_limits_leave_model_generation_headroom() -> None:
+    settings = Settings()
+
+    assert settings.mcp_tool_deadline_seconds == 105
+    assert settings.mcp_repeat_search_cooldown_seconds == 5
+    assert (
+        settings.quick_context_chars,
+        settings.standard_context_chars,
+        settings.deep_context_chars,
+        settings.read_context_chars,
+    ) == (9_000, 10_000, 12_000, 8_000)
+
+
 def test_database_cache_round_trip(tmp_path) -> None:
     database = Database(tmp_path / "research.db")
     database.initialize()
@@ -191,9 +204,7 @@ def test_zero_retention_purges_existing_data_and_blocks_query_derived_writes(tmp
 async def test_periodic_retention_cleans_rows_added_after_startup(tmp_path) -> None:
     database = Database(tmp_path / "periodic-retention.db")
     database.initialize()
-    cleanup = asyncio.create_task(
-        run_retention_cleanup(database, 7, interval_seconds=0.01)
-    )
+    cleanup = asyncio.create_task(run_retention_cleanup(database, 7, interval_seconds=0.01))
     try:
         _insert_request(
             database,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from collections.abc import AsyncIterator
 from typing import Annotated, Any, Literal
 
@@ -18,6 +19,43 @@ from app.storage.retention import run_retention_cleanup
 
 
 def create_mcp_server(runtime: Runtime) -> FastMCP:
+    search_state_lock = asyncio.Lock()
+    search_active = False
+    last_search_completed_at = float("-inf")
+
+    async def claim_interactive_search() -> str | None:
+        nonlocal search_active
+        async with search_state_lock:
+            if search_active:
+                return "another search is already running"
+            since_completion = time.monotonic() - last_search_completed_at
+            if since_completion < runtime.settings.mcp_repeat_search_cooldown_seconds:
+                return "a search just completed in this turn"
+            search_active = True
+            return None
+
+    async def release_interactive_search(*, completed: bool) -> None:
+        nonlocal last_search_completed_at, search_active
+        async with search_state_lock:
+            search_active = False
+            if completed:
+                last_search_completed_at = time.monotonic()
+
+    def suppressed_search_response(reason: str) -> dict[str, Any]:
+        return {
+            "status": "repeated_search_suppressed",
+            "reason": reason,
+            "message": (
+                "Use the preceding search result and answer the user now. Do not call another "
+                "search tool in this turn; state any remaining uncertainty in the answer."
+            ),
+            "response_info": {
+                "detail": "control",
+                "next_action": "answer_user_now",
+                "do_not_repeat_search_this_turn": True,
+            },
+        }
+
     @contextlib.asynccontextmanager
     async def lifespan(_: FastMCP) -> AsyncIterator[dict[str, object]]:
         cleanup = asyncio.create_task(
@@ -44,9 +82,10 @@ def create_mcp_server(runtime: Runtime) -> FastMCP:
             "the returned evidence or snippets; never renumber or invent citations. "
             "Compact response mode is the default and omits internal scoring/debug fields; ask "
             "for full response detail only when diagnosing the retrieval system. "
-            "Call search_web once per coherent "
-            "question and wait for it to finish; do not concatenate independent search strings, "
-            "send JSON query arrays, or launch duplicate searches concurrently. The server "
+            "After one search result, answer the user immediately using available citations; "
+            "do not call another search tool in the same turn, even when gaps remain. Do not "
+            "concatenate independent search strings, send JSON query arrays, or launch duplicate "
+            "searches concurrently. The server "
             "performs its own focused expansion and safely decomposes accidental query batches."
         ),
         stateless_http=True,
@@ -89,15 +128,24 @@ def create_mcp_server(runtime: Runtime) -> FastMCP:
     ) -> dict[str, Any]:
         """Search privately; answer every supported part using only exact returned citations."""
         selected_mode = select_search_mode(query) if mode == "auto" else SearchMode(mode)
-        package = await runtime.pipeline.search_web(
-            query,
-            mode=selected_mode,
-            max_sources=max(1, min(max_sources, 25)),
-            recency_days=recency_days,
-            include_domains=include_domains,
-            exclude_domains=exclude_domains,
-            language=language,
-        )
+        suppression_reason = await claim_interactive_search()
+        if suppression_reason is not None:
+            return suppressed_search_response(suppression_reason)
+        completed = False
+        try:
+            package = await runtime.pipeline.search_web(
+                query,
+                mode=selected_mode,
+                max_sources=max(1, min(max_sources, 25)),
+                recency_days=recency_days,
+                include_domains=include_domains,
+                exclude_domains=exclude_domains,
+                language=language,
+                deadline_seconds_override=runtime.settings.mcp_tool_deadline_seconds,
+            )
+            completed = True
+        finally:
+            await release_interactive_search(completed=completed)
         if mode == "auto":
             package.warnings.insert(0, f"Auto-selected {selected_mode.value} research mode.")
         context_budget = max_context_chars or getattr(
@@ -123,13 +171,22 @@ def create_mcp_server(runtime: Runtime) -> FastMCP:
         ] = None,
     ) -> dict[str, Any]:
         """Run multi-round research; answer supported parts with only exact returned citations."""
-        package = await runtime.pipeline.deep_research(
-            question,
-            max_search_rounds=max(2, min(max_search_rounds, 4)),
-            max_sources=max(1, min(max_sources, 25)),
-            recency_days=recency_days,
-            research_depth=research_depth,
-        )
+        suppression_reason = await claim_interactive_search()
+        if suppression_reason is not None:
+            return suppressed_search_response(suppression_reason)
+        completed = False
+        try:
+            package = await runtime.pipeline.deep_research(
+                question,
+                max_search_rounds=max(2, min(max_search_rounds, 4)),
+                max_sources=max(1, min(max_sources, 25)),
+                recency_days=recency_days,
+                research_depth=research_depth,
+                deadline_seconds_override=runtime.settings.mcp_tool_deadline_seconds,
+            )
+            completed = True
+        finally:
+            await release_interactive_search(completed=completed)
         return research_response(
             package,
             detail=response_detail,
@@ -158,7 +215,18 @@ def create_mcp_server(runtime: Runtime) -> FastMCP:
     @server.tool()
     async def search_status() -> dict[str, Any]:
         """Return local component, privacy, cache, database, and model status."""
-        return (await runtime.pipeline.status()).model_dump(mode="json")
+        status = (await runtime.pipeline.status()).model_dump(mode="json")
+        status["interactive_limits"] = {
+            "tool_deadline_seconds": runtime.settings.mcp_tool_deadline_seconds,
+            "repeat_search_cooldown_seconds": (runtime.settings.mcp_repeat_search_cooldown_seconds),
+            "context_chars": {
+                "quick": runtime.settings.quick_context_chars,
+                "standard": runtime.settings.standard_context_chars,
+                "deep": runtime.settings.deep_context_chars,
+                "read_url": runtime.settings.read_context_chars,
+            },
+        }
+        return status
 
     @server.tool()
     async def clear_local_data(

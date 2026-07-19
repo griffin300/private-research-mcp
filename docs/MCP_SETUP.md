@@ -28,6 +28,12 @@ Do not add proxy credentials or secrets. Save and enable the server. Expected to
 runs short of context, set 6,000–10,000 for a call; if a diagnostic needs offsets, scores, hashes,
 and all internal metadata, explicitly set `response_detail` to `full`.
 
+The default Quick/Standard/Deep envelopes are 9,000/10,000/12,000 characters. Interactive search
+tools return completed evidence within 105 seconds and tell the model to answer immediately rather
+than stacking a second search result into the same turn. An immediate duplicate/parallel search is
+suppressed for five seconds and receives only an `answer_user_now` control result. The larger
+`mcp.json` timeout remains a transport backstop, not a target duration.
+
 For production, disable any separate raw-SearXNG MCP entry in the same LM Studio configuration. Otherwise the model can bypass the private tool's batch repair, canonical-source routing, page verification, citation boundaries, deadlines, and query-conservation controls; the raw endpoint also gives it a second path with different privacy behavior.
 
 LM Studio currently uses Cursor-style `mcp.json` notation and supports local/remote MCP servers. Streamable HTTP is the production transport recommended by stable MCP Python SDK documentation.
@@ -93,7 +99,8 @@ LM Studio 0.4.0+ can expose configured `mcp.json` servers to API clients. Enable
 ## Troubleshooting
 
 - Connection refused: run `Invoke-RestMethod http://127.0.0.1:8088/health`.
-- Request timed out (`-32001`): confirm the server entry has `"timeout": 900000`; the app returns completed partial research at its shorter mode-specific deadline instead of leaving orphaned work running.
+- Request timed out (`-32001`): confirm the server entry has `"timeout": 900000`; interactive search tools return completed partial research at their 105-second deadline instead of leaving orphaned work running.
+- Search completes but the model does not answer: reload the MCP server so the model receives the current one-search-per-turn instruction and compact response schema; confirm `search_status.interactive_limits` reports the expected deadline and context budgets.
 - 404 or redirect trouble: use the canonical URL `http://127.0.0.1:8088/mcp/`.
 - Tools absent: reload `mcp.json` and ensure the JSON is nested under `mcpServers`.
 - Calls fail but tools list: run `search_status`, then inspect `docker compose logs app tor-search tor-fetch`. SearXNG container logs are deliberately disabled to prevent engine errors from recording query URLs.

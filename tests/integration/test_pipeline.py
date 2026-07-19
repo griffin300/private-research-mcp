@@ -1070,6 +1070,40 @@ async def test_search_deadline_cancels_orphaned_backend_work(tmp_path) -> None:
 
 
 @pytest.mark.integration
+async def test_interactive_deadline_override_returns_partial_package(tmp_path) -> None:
+    settings = Settings(
+        privacy_mode="development",
+        database_path=tmp_path / "interactive-deadline.db",
+        search_min_interval_seconds=0,
+    )
+    database = Database(settings.database_path)
+    database.initialize()
+    backend = SlowBackend()
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=backend,
+        fetcher=FakeFetcher(),  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+    started = asyncio.get_running_loop().time()
+
+    result = await pipeline.search_web(
+        "A deliberately slow interactive research request",
+        mode=SearchMode.DEEP,
+        deadline_seconds_override=0.05,
+    )
+
+    assert asyncio.get_running_loop().time() - started < 0.5
+    assert any(item.get("error") == "ResearchDeadlineExceeded" for item in result.failures)
+    assert any("deadline was reached" in warning for warning in result.warnings)
+    assert backend.cancelled >= 1
+    assert not pipeline._search_inflight
+
+
+@pytest.mark.integration
 async def test_read_url_honors_robots_disallow(tmp_path) -> None:
     settings = Settings(privacy_mode="development", database_path=tmp_path / "robots.db")
     database = Database(settings.database_path)

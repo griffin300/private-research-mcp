@@ -73,3 +73,13 @@
 - Response shaping measured 1.864 ms median and 3.560 ms p95 over 540 local calls, so it adds no meaningful retrieval latency while reducing downstream model prompt processing.
 - The final local regression suite passed all 166 tests; Ruff and strict Mypy also passed.
 - Rebuilt the live app and loopback MCP bridge; all five services returned healthy. Streamable HTTP initialization/status passed, and one bounded live smoke returned 4 evidence passages in 6,987 characters plus 3 ranked `read_url` passages in 4,279 characters, both within their configured budgets.
+
+## 2026-07-19 - Silent post-search handoff fix
+
+- Non-content request metrics and MCP lifecycle logs showed a 170.3-second search completed successfully, then the calling model started another 63.2-second search 16 milliseconds later. The stacked latency and tool context, rather than a backend crash, explained the observed completed-search/no-answer behavior.
+- Interactive MCP searches now return their best completed exact results and evidence within 105 seconds across every mode. Longer 90/240/720-second mode deadlines remain available to direct benchmark/pipeline runs, so the interactive safeguard does not alter offline evaluation behavior.
+- Added a shared five-second guard across `search_web` and `deep_research`. An immediate duplicate or parallel search receives a tiny `answer_user_now` control response instead of launching another retrieval and filling the same model turn twice.
+- Reduced the default Standard/Deep/read context envelopes from 14,000/28,000/10,000 to 10,000/12,000/8,000 characters; Quick remains 9,000. On 18 saved real benchmark packages, every default search budget retained all evidence, all snippets, all 42 visible fact hits, and valid citations with zero overruns.
+- Added trusted response guidance telling the calling model to answer immediately and not search again in the same turn. `search_status` now exposes the active interactive deadline, repeat-search cooldown, and context budgets.
+- Final local verification passed all 169 tests, Ruff, and strict Mypy. No live search benchmark was rerun for this fix.
+- Rebuilt the live app/bridge with all five services healthy. The bounded end-to-end smoke returned 4 evidence passages in 7,061 characters, suppressed the intentionally immediate second search, and returned 3 `read_url` passages in 4,352 characters.

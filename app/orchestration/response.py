@@ -82,6 +82,8 @@ def read_response(
             "detail": "compact",
             "context_budget_chars": budget,
             "web_content_is_untrusted": True,
+            "next_action": "answer_user_now",
+            "do_not_repeat_search_this_turn": True,
             "omitted_passages": max(0, len(passages) - len(compact_passages)),
             "text_compacted": text_compacted,
         },
@@ -167,6 +169,8 @@ def _compact_research_response(package: ResearchPackage, budget: int) -> dict[st
             "web_content_is_untrusted": True,
             "search_snippets_are_unverified": True,
             "use_exact_citations_only": True,
+            "next_action": "answer_user_now",
+            "do_not_repeat_search_this_turn": True,
             "omitted_evidence": 0,
             "omitted_search_snippets": max(
                 0, len(package.search_snippets) - len(selected_snippets)

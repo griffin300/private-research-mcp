@@ -137,11 +137,17 @@ class ResearchPipeline:
         language: str = "en",
         rounds_override: int | None = None,
         exact_results_override: list[SearchResult] | None = None,
+        deadline_seconds_override: float | None = None,
     ) -> ResearchPackage:
         started = time.monotonic()
         request_id = uuid.uuid4().hex[:16]
         budget = budget_for(mode, self.settings)
-        deadline_seconds = getattr(self.settings, f"{mode.value}_deadline_seconds")
+        configured_deadline = getattr(self.settings, f"{mode.value}_deadline_seconds")
+        deadline_seconds = (
+            configured_deadline
+            if deadline_seconds_override is None
+            else min(configured_deadline, max(0.01, deadline_seconds_override))
+        )
         deadline_at = started + deadline_seconds
         search_deadline_at = started + deadline_seconds * 0.55
         query_limit = (
@@ -507,6 +513,7 @@ class ResearchPipeline:
         max_sources: int = 20,
         recency_days: int | None = None,
         research_depth: str = "normal",
+        deadline_seconds_override: float | None = None,
     ) -> ResearchPackage:
         requested = max(2, max_search_rounds)
         rounds = requested if research_depth == "extensive" else min(requested, 3)
@@ -516,6 +523,7 @@ class ResearchPipeline:
             max_sources=max_sources,
             recency_days=recency_days,
             rounds_override=max(1, rounds - 1),
+            deadline_seconds_override=deadline_seconds_override,
         )
 
     async def read_url(self, url: str, question: str | None = None) -> dict[str, object]:

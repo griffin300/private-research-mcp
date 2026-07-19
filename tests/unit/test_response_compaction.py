@@ -120,6 +120,8 @@ def test_compact_research_response_preserves_quality_and_citation_floor() -> Non
         {"stage": "fetch_or_extract", "error": "FetchError", "count": 12}
     ]
     assert compact["response_info"]["web_content_is_untrusted"] is True
+    assert compact["response_info"]["next_action"] == "answer_user_now"
+    assert compact["response_info"]["do_not_repeat_search_this_turn"] is True
     serialized = json.dumps(compact)
     assert "quality_explanation" not in serialized
     assert "start_offset" not in serialized
@@ -198,6 +200,7 @@ def test_read_response_caps_passages_and_removes_debug_fields() -> None:
     assert 3 <= len(compact["passages"]) <= 8
     assert compact["response_info"]["omitted_passages"] == 12 - len(compact["passages"])
     assert compact["response_info"]["web_content_is_untrusted"] is True
+    assert compact["response_info"]["next_action"] == "answer_user_now"
     serialized = json.dumps(compact)
     assert "start_offset" not in serialized
     assert "relevance_score" not in serialized
