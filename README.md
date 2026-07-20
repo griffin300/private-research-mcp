@@ -98,7 +98,7 @@ Search and read tools default to `response_detail: "compact"`. Compact responses
 citation strings, source URLs, selected evidence, the exact-query snippet floor, coverage gaps,
 privacy status, and aggregated failures while omitting offsets, hashes, engine lists, empty
 support arrays, repeated source metadata, and internal ranking/debug fields. Mode defaults target
-9,000 characters for Quick, 10,000 for Standard, and 12,000 for Deep; `read_url` targets 8,000.
+8,000 characters for Quick, 9,000 for Standard, and 10,000 for Deep; `read_url` targets 8,000.
 Use `max_context_chars` (4,000–50,000) to override one call. Use
 `response_detail: "full"` only for retrieval diagnostics or benchmark tooling that needs the
 complete internal package.
@@ -126,9 +126,9 @@ PRM_LOG_RAW_QUERIES=false
 PRM_ENABLE_EMBEDDINGS=false
 PRM_ENABLE_RERANKER=false
 PRM_ENABLE_BROWSER=false
-PRM_QUICK_CONTEXT_CHARS=9000
-PRM_STANDARD_CONTEXT_CHARS=10000
-PRM_DEEP_CONTEXT_CHARS=12000
+PRM_QUICK_CONTEXT_CHARS=8000
+PRM_STANDARD_CONTEXT_CHARS=9000
+PRM_DEEP_CONTEXT_CHARS=10000
 PRM_READ_CONTEXT_CHARS=8000
 PRM_MCP_TOOL_DEADLINE_SECONDS=105
 PRM_MCP_REPEAT_SEARCH_COOLDOWN_SECONDS=5

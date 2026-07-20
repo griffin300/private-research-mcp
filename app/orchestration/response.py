@@ -126,16 +126,26 @@ def _compact_research_response(package: ResearchPackage, budget: int) -> dict[st
             item["heading"] = _clip_text(record.heading, 160)
         evidence.append(item)
 
-    snippets = [_compact_snippet(item, snippet_cap) for item in selected_snippets]
+    strong_verified_context = (
+        package.coverage.status in {"moderate", "strong"} and len(evidence) >= 4
+    )
+    snippets: list[dict[str, Any]] = []
+    exact_position = 0
+    for snippet_record in selected_snippets:
+        item_cap = snippet_cap
+        if snippet_record.query_role == "exact":
+            exact_position += 1
+            if strong_verified_context and exact_position > 3:
+                # Keep all exact result identities for citation safety, but spend
+                # snippet text on the highest-ranked results once verified evidence
+                # already covers the answer.
+                item_cap = min(item_cap, 56)
+        snippets.append(_compact_snippet(snippet_record, item_cap))
     snippet_text_compacted = any(
-        item["text"] != original.text
+        item.get("text", "") != original.text
         for item, original in zip(snippets, selected_snippets, strict=True)
     )
     payload: dict[str, Any] = {
-        "query": _clip_text(package.query, 800),
-        "mode": package.mode,
-        "request_id": package.request_id,
-        "search_rounds": package.search_rounds,
         "coverage": {
             "score": round(package.coverage.score, 4),
             "status": package.coverage.status,
@@ -199,13 +209,16 @@ def _compact_research_response(package: ResearchPackage, budget: int) -> dict[st
 
 
 def _compact_snippet(item: SearchSnippetRecord, text_cap: int) -> dict[str, Any]:
-    return {
+    compact: dict[str, Any] = {
         "citation": item.citation,
         "role": item.query_role,
         "title": _clip_text(item.title, 180),
         "url": item.url,
-        "text": _clip_text(item.text, text_cap),
     }
+    text = _clip_text(item.text, text_cap)
+    if text:
+        compact["text"] = text
+    return compact
 
 
 def _compact_sources(

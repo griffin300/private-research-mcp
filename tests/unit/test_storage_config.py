@@ -63,7 +63,7 @@ def test_interactive_limits_leave_model_generation_headroom() -> None:
         settings.standard_context_chars,
         settings.deep_context_chars,
         settings.read_context_chars,
-    ) == (9_000, 10_000, 12_000, 8_000)
+    ) == (8_000, 9_000, 10_000, 8_000)
 
 
 def test_database_cache_round_trip(tmp_path) -> None:

@@ -28,7 +28,7 @@ Do not add proxy credentials or secrets. Save and enable the server. Expected to
 runs short of context, set 6,000–10,000 for a call; if a diagnostic needs offsets, scores, hashes,
 and all internal metadata, explicitly set `response_detail` to `full`.
 
-The default Quick/Standard/Deep envelopes are 9,000/10,000/12,000 characters. Interactive search
+The default Quick/Standard/Deep envelopes are 8,000/9,000/10,000 characters. Interactive search
 tools return completed evidence within 105 seconds and tell the model to answer immediately rather
 than stacking a second search result into the same turn. An immediate duplicate/parallel search is
 suppressed for five seconds and receives only an `answer_user_now` control result. The larger

@@ -402,6 +402,36 @@ class AdaptiveFacetFetcher:
         )
 
 
+class AdaptiveOrdinaryFetcher:
+    def __init__(self, failed_hosts: set[str] | None = None) -> None:
+        self.failed_hosts = failed_hosts or set()
+        self.page_urls: list[str] = []
+
+    async def fetch(self, url: str) -> FetchResult:
+        if url.endswith("/robots.txt"):
+            body, content_type = "User-agent: *\nAllow: /\n", "text/plain"
+        else:
+            self.page_urls.append(url)
+            host = url.split("/", 3)[2]
+            if host in self.failed_hosts:
+                raise FetchError("ordinary fixture failure")
+            body = (
+                f"<main><h1>MCP privacy transport evidence from {host}</h1>"
+                "<p>MCP privacy transport uses isolated search and destination fetch paths. "
+                f"This independently identified source is {host} and contains enough verified "
+                "material for extraction, relevance scoring, and citation.</p></main>"
+            )
+            content_type = "text/html"
+        return FetchResult(
+            requested_url=url,
+            final_url=url,
+            status_code=200,
+            content_type=content_type,
+            body=body,
+            retrieved_at=datetime.now(UTC),
+        )
+
+
 class BrowserBudgetFetcher:
     async def fetch(self, url: str) -> FetchResult:
         if url.endswith("/robots.txt"):
@@ -929,6 +959,94 @@ async def test_compound_retrieval_backfills_failed_technical_facet_within_cap(tm
     assert len(fetcher.page_urls) == 4
     assert all(term in retained_text for term in ("asyncexitstack", "sqlite", "streamable"))
     assert len(ranked) == 3
+
+
+def _ordinary_candidates(count: int) -> list[SearchResult]:
+    return [
+        SearchResult(
+            url=f"https://ordinary-{index}.example/page",
+            canonical_url=f"https://ordinary-{index}.example/page",
+            title=f"MCP privacy transport evidence {index}",
+            snippet="MCP privacy transport isolated search destination fetch evidence",
+            domain=f"ordinary-{index}.example",
+            preliminary_score=0.9,
+        )
+        for index in range(1, count + 1)
+    ]
+
+
+@pytest.mark.integration
+async def test_ordinary_retrieval_stops_after_quality_target(tmp_path) -> None:
+    settings = Settings(privacy_mode="development", database_path=tmp_path / "ordinary-stop.db")
+    database = Database(settings.database_path)
+    database.initialize()
+    fetcher = AdaptiveOrdinaryFetcher()
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=FakeBackend(),
+        fetcher=fetcher,  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+    ranked, attempts = await pipeline._retrieve(
+        "MCP privacy transport",
+        QueryPlan(
+            "MCP privacy transport",
+            ["MCP privacy transport"],
+            ["MCP privacy transport"],
+            False,
+        ),
+        _ordinary_candidates(12),
+        [],
+        browser_budget=0,
+        relevance_queries=["MCP privacy transport"],
+        deadline_at=None,
+        attempt_limit=8,
+    )
+    assert attempts == 5
+    assert len(fetcher.page_urls) == 5
+    assert len(ranked) == 5
+    assert all(source.relevance_score >= 0.18 for source, _ in ranked)
+
+
+@pytest.mark.integration
+async def test_ordinary_retrieval_backfills_failures_within_same_cap(tmp_path) -> None:
+    settings = Settings(privacy_mode="development", database_path=tmp_path / "ordinary-backfill.db")
+    database = Database(settings.database_path)
+    database.initialize()
+    fetcher = AdaptiveOrdinaryFetcher({"ordinary-1.example", "ordinary-2.example"})
+    pipeline = ResearchPipeline(
+        settings=settings,
+        backend=FakeBackend(),
+        fetcher=fetcher,  # type: ignore[arg-type]
+        browser=BrowserFetcher("http://browser", 1, False),
+        extractor=PageExtractor(),
+        database=database,
+        cache=Cache(database),
+    )
+    failures: list[dict[str, str]] = []
+    ranked, attempts = await pipeline._retrieve(
+        "MCP privacy transport",
+        QueryPlan(
+            "MCP privacy transport",
+            ["MCP privacy transport"],
+            ["MCP privacy transport"],
+            False,
+        ),
+        _ordinary_candidates(12),
+        failures,
+        browser_budget=0,
+        relevance_queries=["MCP privacy transport"],
+        deadline_at=None,
+        attempt_limit=8,
+    )
+    assert attempts == 7
+    assert len(fetcher.page_urls) == 7
+    assert len(ranked) == 5
+    assert all(source.relevance_score >= 0.18 for source, _ in ranked)
+    assert sum(item["error"] == "FetchError" for item in failures) == 2
 
 
 @pytest.mark.integration

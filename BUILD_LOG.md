@@ -83,3 +83,11 @@
 - Added trusted response guidance telling the calling model to answer immediately and not search again in the same turn. `search_status` now exposes the active interactive deadline, repeat-search cooldown, and context budgets.
 - Final local verification passed all 169 tests, Ruff, and strict Mypy. No live search benchmark was rerun for this fix.
 - Rebuilt the live app/bridge with all five services healthy. The bounded end-to-end smoke returned 4 evidence passages in 7,061 characters, suppressed the intentionally immediate second search, and returned 3 `read_url` passages in 4,352 characters.
+
+## 2026-07-19 - Adaptive retrieval and context-density pass
+
+- Ordinary searches now begin with a quality-sized retrieval batch and use the unchanged attempt budget to backfill failed, duplicate, or irrelevant pages from a larger ranked candidate pool. The default eight-attempt search stops after five useful sources in the clean case and still replaces failures within the same privacy and network limits.
+- Compact responses retain all ten exact result identities and URLs, while lower-ranked snippet prose is shortened only when at least four verified evidence records already provide moderate or strong coverage. Request IDs, search-round counters, and repeated query/mode metadata were removed from the model-facing compact form; full diagnostic responses are unchanged.
+- Reduced the default Quick/Standard/Deep context envelopes to 8,000/9,000/10,000 characters. Across the 18 saved benchmark packages, the 8,000-character boundary preserved all evidence, snippets, 42/42 visible fact hits, and valid citations with zero overruns; 7,000 was rejected because it lost three fact hits.
+- Final verification passed all 171 tests, changed-file Ruff checks, and strict Mypy for 57 source files. No new web benchmark was run.
+- Rebuilt the live app and MCP bridge. All five services are healthy, the deployed budgets report 8,000/9,000/10,000/8,000 characters, and Streamable HTTP initialization, required-tool discovery, and structured `search_status` passed.

@@ -122,11 +122,18 @@ def test_compact_research_response_preserves_quality_and_citation_floor() -> Non
     assert compact["response_info"]["web_content_is_untrusted"] is True
     assert compact["response_info"]["next_action"] == "answer_user_now"
     assert compact["response_info"]["do_not_repeat_search_this_turn"] is True
+    assert all(
+        len(item.get("text", "")) <= 56
+        for item in compact["search_snippets"]
+        if item["role"] == "exact" and int(item["citation"][8:11]) > 3
+    )
     serialized = json.dumps(compact)
     assert "quality_explanation" not in serialized
     assert "start_offset" not in serialized
     assert "content_boundary" not in serialized
     assert "query_hash" not in serialized
+    assert '"request_id"' not in serialized
+    assert '"search_rounds"' not in serialized
 
 
 def test_tight_compact_budget_keeps_exact_snippet_floor() -> None:

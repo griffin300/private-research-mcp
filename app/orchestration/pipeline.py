@@ -386,13 +386,13 @@ class ResearchPipeline:
             for facet, candidate in raw_preferred_by_query.items()
             if _candidate_key(candidate) in candidate_keys
         }
-        candidate_pool_limit = (
-            min(
-                len(candidates),
-                max(pages_to_fetch * 3, pages_to_fetch + 2 * len(ranking_queries)),
-            )
-            if len(ranking_queries) > 1
-            else pages_to_fetch
+        candidate_pool_limit = min(
+            len(candidates),
+            (
+                max(pages_to_fetch * 3, pages_to_fetch + 2 * len(ranking_queries))
+                if len(ranking_queries) > 1
+                else max(pages_to_fetch * 2, pages_to_fetch + 4)
+            ),
         )
         fetch_candidates = _select_fetch_candidates(
             candidates,
@@ -850,7 +850,34 @@ class ResearchPipeline:
                 retained.append((source, passages))
 
         if len(relevance_queries) <= 1:
-            await retrieve_batch([(candidate, None) for candidate in candidates[:hard_limit]])
+            # Start with only the number of useful sources the answer is likely to
+            # need, then spend the remaining attempt budget on backups when pages
+            # fail, duplicate one another, or prove irrelevant. This avoids waiting
+            # for every low-ranked page in the common success case without reducing
+            # the maximum quality/recovery budget.
+            target_sources = min(
+                hard_limit,
+                max(3, min(8, (hard_limit * 3 + 4) // 5)),
+            )
+            while attempts < hard_limit:
+                useful_sources = sum(
+                    bool(passages) and source.relevance_score >= 0.18
+                    for source, passages in retained
+                )
+                if useful_sources >= target_sources:
+                    break
+                remaining_slots = hard_limit - attempts
+                deficit = target_sources - useful_sources
+                ordinary_batch = [
+                    (candidate, cast(str | None, None))
+                    for candidate in candidates
+                    if _candidate_key(candidate) not in attempted
+                ][: min(remaining_slots, max(1, deficit))]
+                if not ordinary_batch:
+                    break
+                await retrieve_batch(ordinary_batch)
+                if deadline_at is not None and time.monotonic() >= deadline_at:
+                    break
             return retained, attempts
 
         preferred = preferred_by_query or {}
