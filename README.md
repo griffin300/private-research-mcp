@@ -175,6 +175,10 @@ The dashboard at `http://127.0.0.1:8088/dashboard` shows component health, cache
 
 See `docs/TROUBLESHOOTING.md` for diagnostic commands.
 
+## Contributing and security
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and privacy requirements. Report vulnerabilities and privacy-boundary failures privately according to [SECURITY.md](SECURITY.md), not in a public issue.
+
 ## License
 
 MIT. Bundled services and dependencies retain their own licenses.
