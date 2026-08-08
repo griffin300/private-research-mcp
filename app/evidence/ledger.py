@@ -9,6 +9,7 @@ from app.ranking.lexical import (
     rank_passages_for_queries,
     tokenize,
 )
+from app.search.official_sources import domain_matches_authority
 
 
 def build_evidence(
@@ -30,7 +31,12 @@ def build_evidence(
         rank_passages_for_queries(queries, [passage for _, passage in candidates])
     elif query and candidates:
         rank_passages(query, [passage for _, passage in candidates])
-    candidates = _select_diverse(candidates, limit, queries=queries)
+    candidates = _select_diverse(
+        candidates,
+        limit,
+        queries=queries,
+        authority_query=query,
+    )
     return [
         make_evidence(source, passage, index)
         for index, (source, passage) in enumerate(candidates, 1)
@@ -42,6 +48,7 @@ def _select_diverse(
     limit: int,
     *,
     queries: list[str] | None = None,
+    authority_query: str | None = None,
 ) -> list[tuple[SourceRecord, Passage]]:
     if not candidates:
         return []
@@ -69,6 +76,27 @@ def _select_diverse(
         selected.append((source, passage))
         selected_tokens.append(set(tokenize(passage.text)))
         source_counts[source.source_id] = source_counts.get(source.source_id, 0) + 1
+
+    # Front-load a sufficiently relevant first-party passage when the question
+    # identifies a known authority. Smaller local models are sensitive to evidence
+    # order, so an exact SEO explanation should not bury the official source. The
+    # absolute post-fetch relevance gate above still applies to every candidate.
+    if authority_query and len(selected) < limit:
+        terms = set(meaningful_tokens(authority_query))
+        required = 1.0 if len(terms) <= 2 else 0.60
+        authority_matches: list[tuple[int, float]] = []
+        for index, (source, passage) in enumerate(remaining):
+            if not domain_matches_authority(authority_query, source.url):
+                continue
+            coverage = len(terms & set(meaningful_tokens(passage.text))) / max(1, len(terms))
+            if coverage >= required:
+                authority_matches.append((index, coverage))
+        if authority_matches:
+            best_index, _ = max(
+                authority_matches,
+                key=lambda item: (item[1], base_score(remaining[item[0]])),
+            )
+            select(best_index)
 
     for query in queries or []:
         if len(selected) >= limit:

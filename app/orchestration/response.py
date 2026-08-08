@@ -4,6 +4,7 @@ import json
 import re
 from collections import Counter
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from app.models import ResearchPackage, SearchSnippetRecord, SourceRecord
 from app.ranking.lexical import meaningful_tokens
@@ -127,19 +128,46 @@ def _compact_research_response(package: ResearchPackage, budget: int) -> dict[st
         evidence.append(item)
 
     strong_verified_context = (
-        package.coverage.status in {"moderate", "strong"} and len(evidence) >= 4
+        package.coverage.status in {"moderate", "strong"}
+        and not package.coverage.missing_topics
+        and len(evidence) >= 4
+    )
+    evidence_urls = {
+        _url_identity(source_by_id[str(item["source_id"])].url)
+        for item in evidence
+        if str(item["source_id"]) in source_by_id
+    }
+    answer_topics = [
+        *package.coverage.covered_topics,
+        *package.coverage.missing_topics,
+    ]
+    essential_snippets = _essential_snippet_indexes(
+        selected_snippets,
+        answer_topics or [package.query],
     )
     snippets: list[dict[str, Any]] = []
     exact_position = 0
-    for snippet_record in selected_snippets:
+    for snippet_index, snippet_record in enumerate(selected_snippets):
         item_cap = snippet_cap
+        verified_duplicate = (
+            strong_verified_context
+            and _url_identity(snippet_record.url) in evidence_urls
+        )
         if snippet_record.query_role == "exact":
             exact_position += 1
-            if strong_verified_context and exact_position > 3:
+            if verified_duplicate:
+                # Preserve the exact result identity and citation while extracted
+                # evidence from the same page carries the answer-bearing text.
+                item_cap = 0
+            elif snippet_index in essential_snippets:
+                item_cap = max(item_cap, 180)
+            elif strong_verified_context and exact_position > 2:
                 # Keep all exact result identities for citation safety, but spend
-                # snippet text on the highest-ranked results once verified evidence
-                # already covers the answer.
-                item_cap = min(item_cap, 56)
+                # snippet text on query-distinct results once verified evidence
+                # already covers every requested topic.
+                item_cap = min(item_cap, 48)
+        elif verified_duplicate:
+            item_cap = 0
         snippets.append(_compact_snippet(snippet_record, item_cap))
     snippet_text_compacted = any(
         item.get("text", "") != original.text
@@ -149,6 +177,9 @@ def _compact_research_response(package: ResearchPackage, budget: int) -> dict[st
         "coverage": {
             "score": round(package.coverage.score, 4),
             "status": package.coverage.status,
+            "covered_topics": [
+                _clip_text(value, 180) for value in package.coverage.covered_topics[:6]
+            ],
             "missing_topics": [
                 _clip_text(value, 220) for value in package.coverage.missing_topics[:6]
             ],
@@ -181,6 +212,10 @@ def _compact_research_response(package: ResearchPackage, budget: int) -> dict[st
             "use_exact_citations_only": True,
             "next_action": "answer_user_now",
             "do_not_repeat_search_this_turn": True,
+            "answer_instruction": (
+                "Answer every supported topic now; prefer evidence citations and use "
+                "snippet citations only for unresolved gaps."
+            ),
             "omitted_evidence": 0,
             "omitted_search_snippets": max(
                 0, len(package.search_snippets) - len(selected_snippets)
@@ -281,6 +316,10 @@ def _fit_research_payload(
         if len(unresolved) > 3:
             unresolved.pop()
             continue
+        covered_topics = payload["coverage"]["covered_topics"]
+        if len(covered_topics) > 2:
+            covered_topics.pop()
+            continue
         evidence = payload["evidence"]
         longest_evidence = _longest_text_item(evidence, floor=evidence_floor)
         if longest_evidence is not None:
@@ -340,6 +379,9 @@ def _fit_research_payload(
         missing_topics = payload["coverage"]["missing_topics"]
         if len(missing_topics) > 1:
             missing_topics.pop()
+            continue
+        if covered_topics:
+            covered_topics.pop()
             continue
         longest_evidence = _longest_text_item(evidence, floor=100)
         if longest_evidence is not None:
@@ -425,6 +467,54 @@ def _clip_relevant_text(value: str, limit: int, query: str | None) -> str:
     terms = set(meaningful_tokens(query))
     if not terms:
         return _clip_text(text, limit)
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", text)
+        if sentence.strip()
+    ]
+    matched: list[tuple[int, str, set[str], int]] = []
+    for index, sentence in enumerate(sentences):
+        sentence_terms = set(meaningful_tokens(sentence))
+        overlap = terms & sentence_terms
+        if overlap:
+            occurrences = sum(sentence.casefold().count(term.casefold()) for term in terms)
+            matched.append((index, sentence, overlap, occurrences))
+
+    # Extract several complete, non-adjacent answer-bearing sentences when a
+    # question has multiple facets. One lexical window can otherwise discard a
+    # second fact even though the full evidence record contains it.
+    selected: list[tuple[int, str]] = []
+    covered: set[str] = set()
+    remaining = list(matched)
+    while remaining and len(selected) < 4:
+        best = max(
+            remaining,
+            key=lambda item: (
+                12 * len(item[2] - covered) + 4 * len(item[2]) + item[3],
+                -item[0],
+            ),
+        )
+        remaining.remove(best)
+        proposed = sorted([*selected, (best[0], best[1])])
+        proposed_text = " … ".join(sentence for _, sentence in proposed)
+        proposed_prefix = "…" if proposed[0][0] > 0 else ""
+        proposed_suffix = "…" if proposed[-1][0] < len(sentences) - 1 else ""
+        if len(proposed_prefix + proposed_text + proposed_suffix) > limit:
+            if not selected:
+                return _clip_relevant_window(text, limit, terms)
+            continue
+        selected = proposed
+        covered.update(best[2])
+
+    if selected:
+        rendered = " … ".join(sentence for _, sentence in selected)
+        prefix = "…" if selected[0][0] > 0 else ""
+        suffix = "…" if selected[-1][0] < len(sentences) - 1 else ""
+        return prefix + rendered + suffix
+    return _clip_relevant_window(text, limit, terms)
+
+
+def _clip_relevant_window(text: str, limit: int, terms: set[str]) -> str:
     lowered = text.casefold()
     centers = [
         match.start()
@@ -433,7 +523,6 @@ def _clip_relevant_text(value: str, limit: int, query: str | None) -> str:
     ]
     if not centers:
         return _clip_text(text, limit)
-
     window_size = max(1, limit - 2)
     candidates: list[tuple[int, int, int]] = []
     for center in centers:
@@ -456,6 +545,38 @@ def _clip_relevant_text(value: str, limit: int, query: str | None) -> str:
     prefix = "…" if start > 0 else ""
     suffix = "…" if end < len(text) else ""
     return prefix + text[start:end].strip() + suffix
+
+
+def _essential_snippet_indexes(
+    snippets: list[SearchSnippetRecord], topics: list[str]
+) -> set[int]:
+    essential = set(range(min(2, len(snippets))))
+    for topic in topics[:6]:
+        terms = set(meaningful_tokens(topic))
+        if not terms:
+            continue
+        scored: list[tuple[float, int]] = []
+        for index, snippet in enumerate(snippets):
+            text_terms = set(meaningful_tokens(f"{snippet.title} {snippet.text}"))
+            coverage = len(terms & text_terms) / len(terms)
+            if coverage > 0:
+                scored.append((coverage + 0.10 * snippet.relevance_score, index))
+        if scored:
+            essential.add(max(scored, key=lambda item: (item[0], -item[1]))[1])
+        if len(essential) >= 6:
+            break
+    return essential
+
+
+def _url_identity(value: str) -> tuple[str, str, int | None, str, str]:
+    parsed = urlsplit(value)
+    return (
+        parsed.scheme.casefold(),
+        (parsed.hostname or "").casefold().rstrip("."),
+        parsed.port,
+        parsed.path.rstrip("/") or "/",
+        parsed.query,
+    )
 
 
 def _unique(values: list[str]) -> list[str]:

@@ -122,6 +122,8 @@ def test_compact_research_response_preserves_quality_and_citation_floor() -> Non
     assert compact["response_info"]["web_content_is_untrusted"] is True
     assert compact["response_info"]["next_action"] == "answer_user_now"
     assert compact["response_info"]["do_not_repeat_search_this_turn"] is True
+    assert compact["coverage"]["covered_topics"]
+    assert "Answer every supported topic" in compact["response_info"]["answer_instruction"]
     assert all(
         len(item.get("text", "")) <= 56
         for item in compact["search_snippets"]
@@ -142,7 +144,7 @@ def test_tight_compact_budget_keeps_exact_snippet_floor() -> None:
     assert len(json.dumps(compact, ensure_ascii=False)) <= 8_000
     exact = [item for item in compact["search_snippets"] if item["role"] == "exact"]
     assert len(exact) == 10
-    assert compact["response_info"]["omitted_search_snippets"] >= 4
+    assert compact["response_info"]["omitted_search_snippets"] >= 2
     assert compact["evidence"]
 
 
@@ -172,6 +174,34 @@ def test_compaction_keeps_query_relevant_fact_near_passage_end() -> None:
     compact = research_response(package, max_chars=14_000)
 
     assert "ORBIT-7" in compact["evidence"][0]["text"]
+
+
+def test_compaction_preserves_separated_answer_facets_in_one_passage() -> None:
+    package = _package()
+    package.query = "What does WAL mean and what concurrency does it permit?"
+    package.evidence[0].text = (
+        "WAL means Write-Ahead Logging. "
+        + "Unrelated implementation history. " * 100
+        + "WAL permits concurrent readers with one writer at a time."
+    )
+
+    compact = research_response(package, max_chars=14_000)
+
+    text = compact["evidence"][0]["text"]
+    assert "Write-Ahead Logging" in text
+    assert "concurrent readers" in text
+
+
+def test_verified_snippet_duplicate_keeps_identity_without_repeating_text() -> None:
+    package = _package()
+    package.search_snippets[0].url = package.sources[0].url
+
+    compact = research_response(package, max_chars=14_000)
+
+    first = compact["search_snippets"][0]
+    assert first["citation"] == "[search_001]"
+    assert first["url"] == package.sources[0].url
+    assert "text" not in first
 
 
 def test_read_response_caps_passages_and_removes_debug_fields() -> None:

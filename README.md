@@ -99,6 +99,10 @@ citation strings, source URLs, selected evidence, the exact-query snippet floor,
 privacy status, and aggregated failures while omitting offsets, hashes, engine lists, empty
 support arrays, repeated source metadata, and internal ranking/debug fields. Mode defaults target
 8,000 characters for Quick, 9,000 for Standard, and 10,000 for Deep; `read_url` targets 8,000.
+Within those limits, compact mode can retain several complete query-relevant sentences from
+different parts of one passage, front-loads sufficiently relevant first-party evidence, exposes a
+short covered-topic checklist, and omits duplicate snippet prose when extracted evidence from the
+same URL is already present. Exact snippet identities, URLs, and citation strings remain available.
 Use `max_context_chars` (4,000–50,000) to override one call. Use
 `response_detail: "full"` only for retrieval diagnostics or benchmark tooling that needs the
 complete internal package.

@@ -91,3 +91,13 @@
 - Reduced the default Quick/Standard/Deep context envelopes to 8,000/9,000/10,000 characters. Across the 18 saved benchmark packages, the 8,000-character boundary preserved all evidence, snippets, 42/42 visible fact hits, and valid citations with zero overruns; 7,000 was rejected because it lost three fact hits.
 - Final verification passed all 171 tests, changed-file Ruff checks, and strict Mypy for 57 source files. No new web benchmark was run.
 - Rebuilt the live app and MCP bridge. All five services are healthy, the deployed budgets report 8,000/9,000/10,000/8,000 characters, and Streamable HTTP initialization, required-tool discovery, and structured `search_status` passed.
+
+## 2026-08-08 - Authority-first evidence and multi-fact compaction
+
+- Query-aligned first-party evidence is now front-loaded when its extracted passage independently meets the normal absolute relevance gate and covers at least 60% of the meaningful question terms. This changes ordering, not admission or the privacy/network budget.
+- Compact evidence now selects up to four complete query-relevant sentences from separate regions of a passage instead of relying on one lexical window. This preserves separated answer facets at the same character ceiling.
+- Verified snippet prose is omitted when extracted evidence from the same URL already covers every topic; exact snippet identity, URL, and citation remain. Later exact snippets that uniquely cover a topic receive a larger text allowance, and incomplete coverage disables aggressive snippet shortening.
+- Compact responses now expose bounded covered-topic guidance and an explicit post-tool instruction to answer every supported part immediately, aimed at improving handoff reliability for smaller local models.
+- Local verification passed 174 non-live tests, changed-file Ruff checks, and strict Mypy across 63 source files. The release privacy suite passed after deployment.
+- The bounded live MCP smoke returned four evidence passages in 5,272 characters and three ranked `read_url` passages in 3,371 characters. Relative to the preceding live smoke, those payloads were 25.3% and 22.5% smaller respectively while retaining the same evidence/passage counts.
+- A single local answer-generation smoke used the currently loaded `qwen3.6-27b-uncensored-hauhaucs-aggressive` model. It achieved full deterministic fact and grounded-fact recall on the two-part curl SOCKS hostname-resolution check; this is a smoke test, not a replacement benchmark or a universal quality claim.

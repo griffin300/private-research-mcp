@@ -42,6 +42,54 @@ def test_passage_ranking_and_citation() -> None:
     assert record.citation == "[src_001, ev_001]"
 
 
+def test_query_aligned_authority_is_front_loaded_when_answer_bearing() -> None:
+    now = datetime.now(UTC)
+    official = SourceRecord(
+        source_id="src_official",
+        url="https://www.sqlite.org/wal.html",
+        title="Write-Ahead Logging",
+        domain="sqlite.org",
+        retrieved_at=now,
+        source_type="official_documentation",
+        quality_score=0.72,
+        relevance_score=0.55,
+        fetch_method="http",
+        content_hash="official",
+    )
+    generic = SourceRecord(
+        source_id="src_generic",
+        url="https://example.com/sqlite-wal",
+        title="SQLite WAL guide",
+        domain="example.com",
+        retrieved_at=now,
+        source_type="web_page",
+        quality_score=0.95,
+        relevance_score=0.95,
+        fetch_method="http",
+        content_hash="generic",
+    )
+    official_passage = Passage(
+        text="SQLite WAL is a write-ahead log that permits readers alongside one writer.",
+        start_offset=0,
+        end_offset=74,
+        relevance_score=0.65,
+    )
+    generic_passage = Passage(
+        text="SQLite WAL is a write-ahead log that permits readers alongside one writer.",
+        start_offset=0,
+        end_offset=74,
+        relevance_score=1.0,
+    )
+
+    evidence = build_evidence(
+        [(generic, [generic_passage]), (official, [official_passage])],
+        2,
+        query="In SQLite, what does WAL mean and what concurrency does it permit?",
+    )
+
+    assert evidence[0].source_id == "src_official"
+
+
 def test_coverage_reports_missing_topics() -> None:
     evidence = [
         make_evidence(
