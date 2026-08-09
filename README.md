@@ -142,6 +142,8 @@ Strict mode refuses missing/shared proxies and never retries directly. `developm
 
 Each page I/O attempt has a 30-second timeout because the quality-first configuration prefers waiting for useful Tor-routed sources over returning early; one transient retry gives a logical page fetch a 60-second total bound. Robots checks use a separate 15-second wrapper, and deterministic failures are not retried. Direct pipeline Quick/Standard/Deep runs retain 90/240/720-second research deadlines, while interactive MCP search tools use the smaller 105-second return deadline and package completed exact results/evidence if the tail is still pending. The LM Studio entry uses a 15-minute per-tool timeout only as an outer transport backstop.
 
+Tor-routed page fetches reuse one HTTP connection pool only for the duration of a single MCP tool call. This avoids repeated SOCKS/TLS setup across robots checks, pages, redirects, retries, and ranked backups without keeping destination connections alive across separate user searches.
+
 The optional enhanced planner accepts only a separate loopback/private/Docker-internal OpenAI-compatible endpoint. It falls back to deterministic planning on failure and rejects reuse of the primary LM Studio endpoint.
 
 ## Privacy guarantees and limitations

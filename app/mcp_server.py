@@ -133,16 +133,17 @@ def create_mcp_server(runtime: Runtime) -> FastMCP:
             return suppressed_search_response(suppression_reason)
         completed = False
         try:
-            package = await runtime.pipeline.search_web(
-                query,
-                mode=selected_mode,
-                max_sources=max(1, min(max_sources, 25)),
-                recency_days=recency_days,
-                include_domains=include_domains,
-                exclude_domains=exclude_domains,
-                language=language,
-                deadline_seconds_override=runtime.settings.mcp_tool_deadline_seconds,
-            )
+            async with runtime.pipeline.fetcher.session():
+                package = await runtime.pipeline.search_web(
+                    query,
+                    mode=selected_mode,
+                    max_sources=max(1, min(max_sources, 25)),
+                    recency_days=recency_days,
+                    include_domains=include_domains,
+                    exclude_domains=exclude_domains,
+                    language=language,
+                    deadline_seconds_override=runtime.settings.mcp_tool_deadline_seconds,
+                )
             completed = True
         finally:
             await release_interactive_search(completed=completed)
@@ -176,14 +177,15 @@ def create_mcp_server(runtime: Runtime) -> FastMCP:
             return suppressed_search_response(suppression_reason)
         completed = False
         try:
-            package = await runtime.pipeline.deep_research(
-                question,
-                max_search_rounds=max(2, min(max_search_rounds, 4)),
-                max_sources=max(1, min(max_sources, 25)),
-                recency_days=recency_days,
-                research_depth=research_depth,
-                deadline_seconds_override=runtime.settings.mcp_tool_deadline_seconds,
-            )
+            async with runtime.pipeline.fetcher.session():
+                package = await runtime.pipeline.deep_research(
+                    question,
+                    max_search_rounds=max(2, min(max_search_rounds, 4)),
+                    max_sources=max(1, min(max_sources, 25)),
+                    recency_days=recency_days,
+                    research_depth=research_depth,
+                    deadline_seconds_override=runtime.settings.mcp_tool_deadline_seconds,
+                )
             completed = True
         finally:
             await release_interactive_search(completed=completed)
@@ -204,7 +206,8 @@ def create_mcp_server(runtime: Runtime) -> FastMCP:
         ] = None,
     ) -> dict[str, Any]:
         """Privately retrieve one safe HTTP(S) URL and return clean ranked passages."""
-        result = await runtime.pipeline.read_url(url, question)
+        async with runtime.pipeline.fetcher.session():
+            result = await runtime.pipeline.read_url(url, question)
         return read_response(
             result,
             detail=response_detail,

@@ -50,3 +50,38 @@ async def test_deterministic_errors_do_not_open_domain_circuit(monkeypatch) -> N
             await fetcher.fetch("https://example.com/missing")
     result = await fetcher.fetch("https://example.com/valid")
     assert result.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_request_session_reuses_client_then_closes_it(monkeypatch) -> None:
+    fetcher = HttpFetcher(
+        policy=FetchPolicy(max_response_bytes=1024, max_redirects=0, timeout_seconds=1, retries=0),
+        proxy_url=None,
+        strict_privacy=False,
+    )
+    clients: list[httpx.AsyncClient] = []
+
+    async def fake_fetch_once(client: httpx.AsyncClient, url: str) -> FetchResult:
+        clients.append(client)
+        return FetchResult(
+            requested_url=url,
+            final_url=url,
+            status_code=200,
+            content_type="text/plain",
+            body="valid response",
+            retrieved_at=datetime.now(UTC),
+        )
+
+    monkeypatch.setattr(fetcher, "_fetch_once", fake_fetch_once)
+    async with fetcher.session():
+        await fetcher.fetch("https://example.com/robots.txt")
+        await fetcher.fetch("https://example.com/reference")
+
+    assert clients[0] is clients[1]
+    assert clients[0].is_closed
+
+    async with fetcher.session():
+        await fetcher.fetch("https://example.com/another-reference")
+
+    assert clients[2] is not clients[0]
+    assert clients[2].is_closed

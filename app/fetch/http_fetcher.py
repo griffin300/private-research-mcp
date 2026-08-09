@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import random
 import time
+from collections.abc import AsyncIterator
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from urllib.parse import urljoin, urlsplit
 
@@ -37,6 +40,23 @@ class HttpFetcher:
         self._domain_limits: dict[str, asyncio.Semaphore] = {}
         self._circuit_failures: dict[str, int] = {}
         self._circuit_open_until: dict[str, float] = {}
+        self._session_client: ContextVar[httpx.AsyncClient | None] = ContextVar(
+            f"http-fetcher-client-{id(self)}",
+            default=None,
+        )
+
+    @contextlib.asynccontextmanager
+    async def session(self) -> AsyncIterator[None]:
+        """Reuse connections inside one research call without linking separate calls."""
+        if self._session_client.get() is not None:
+            yield
+            return
+        async with self._client() as client:
+            token = self._session_client.set(client)
+            try:
+                yield
+            finally:
+                self._session_client.reset(token)
 
     async def fetch(self, url: str) -> FetchResult:
         validate_url(url, allow_private=self.allow_private)
@@ -53,20 +73,14 @@ class HttpFetcher:
             total_timeout = self.policy.timeout_seconds * (self.policy.retries + 1)
             try:
                 async with asyncio.timeout(total_timeout):
-                    async with self._client() as client:
-                        for attempt in range(self.policy.retries + 1):
-                            try:
-                                result = await self._fetch_once(client, url)
-                                self._circuit_failures.pop(domain, None)
-                                self._circuit_open_until.pop(domain, None)
-                                return result
-                            except (httpx.HTTPError, FetchError) as exc:
-                                last_error = exc
-                                if attempt >= self.policy.retries or not _is_transient(exc):
-                                    break
-                                await asyncio.sleep(
-                                    0.15 * (2**attempt) + random.random() * 0.1  # noqa: S311
-                                )
+                    session_client = self._session_client.get()
+                    if session_client is None:
+                        async with self._client() as client:
+                            result, last_error = await self._attempt(client, url, domain)
+                    else:
+                        result, last_error = await self._attempt(session_client, url, domain)
+                    if result is not None:
+                        return result
             except TimeoutError as exc:
                 last_error = exc
         if last_error is not None and _is_transient(last_error):
@@ -81,12 +95,33 @@ class HttpFetcher:
             f"fetch failed without direct fallback: {type(last_error).__name__}"
         ) from last_error
 
+    async def _attempt(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        domain: str,
+    ) -> tuple[FetchResult | None, Exception | None]:
+        last_error: Exception | None = None
+        for attempt in range(self.policy.retries + 1):
+            try:
+                result = await self._fetch_once(client, url)
+                self._circuit_failures.pop(domain, None)
+                self._circuit_open_until.pop(domain, None)
+                return result, None
+            except (httpx.HTTPError, FetchError) as exc:
+                last_error = exc
+                if attempt >= self.policy.retries or not _is_transient(exc):
+                    break
+                await asyncio.sleep(0.15 * (2**attempt) + random.random() * 0.1)  # noqa: S311
+        return None, last_error
+
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             proxy=self.proxy_url,
             timeout=httpx.Timeout(self.policy.timeout_seconds),
             follow_redirects=False,
             trust_env=False,
+            limits=httpx.Limits(keepalive_expiry=30),
             headers={"User-Agent": self.policy.user_agent, "Accept": "text/html,text/plain;q=0.8"},
         )
 
