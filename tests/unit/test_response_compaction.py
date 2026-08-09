@@ -195,6 +195,7 @@ def test_compaction_preserves_separated_answer_facets_in_one_passage() -> None:
 def test_verified_snippet_duplicate_keeps_identity_without_repeating_text() -> None:
     package = _package()
     package.search_snippets[0].url = package.sources[0].url
+    package.search_snippets[0].text = package.evidence[0].text
 
     compact = research_response(package, max_chars=14_000)
 
@@ -202,6 +203,25 @@ def test_verified_snippet_duplicate_keeps_identity_without_repeating_text() -> N
     assert first["citation"] == "[search_001]"
     assert first["url"] == package.sources[0].url
     assert "text" not in first
+
+
+def test_same_page_snippet_is_retained_when_extracted_evidence_omits_its_fact() -> None:
+    package = _package()
+    package.query = "What does WAL permit for readers and writers?"
+    package.sources[0].url = "https://sqlite.org/wal.html"
+    package.evidence[
+        0
+    ].text = "WAL stands for Write-Ahead Logging and stores changes in a sidecar file."
+    package.search_snippets[0].url = package.sources[0].url
+    package.search_snippets[
+        0
+    ].text = "WAL lets readers and a writer proceed concurrently without blocking each other."
+
+    compact = research_response(package, max_chars=14_000)
+
+    first = compact["search_snippets"][0]
+    assert "proceed concurrently" in first["text"]
+    assert len(json.dumps(compact, ensure_ascii=False)) <= 14_000
 
 
 def test_read_response_caps_passages_and_removes_debug_fields() -> None:

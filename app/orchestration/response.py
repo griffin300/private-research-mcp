@@ -132,11 +132,12 @@ def _compact_research_response(package: ResearchPackage, budget: int) -> dict[st
         and not package.coverage.missing_topics
         and len(evidence) >= 4
     )
-    evidence_urls = {
-        _url_identity(source_by_id[str(item["source_id"])].url)
-        for item in evidence
-        if str(item["source_id"]) in source_by_id
-    }
+    evidence_text_by_url: dict[tuple[str, str, int | None, str, str], list[str]] = {}
+    for item in evidence:
+        source = source_by_id.get(str(item["source_id"]))
+        if source is None:
+            continue
+        evidence_text_by_url.setdefault(_url_identity(source.url), []).append(str(item["text"]))
     answer_topics = [
         *package.coverage.covered_topics,
         *package.coverage.missing_topics,
@@ -149,9 +150,16 @@ def _compact_research_response(package: ResearchPackage, budget: int) -> dict[st
     exact_position = 0
     for snippet_index, snippet_record in enumerate(selected_snippets):
         item_cap = snippet_cap
+        same_page_evidence = " ".join(
+            evidence_text_by_url.get(_url_identity(snippet_record.url), [])
+        )
         verified_duplicate = (
             strong_verified_context
-            and _url_identity(snippet_record.url) in evidence_urls
+            and bool(same_page_evidence)
+            and _snippet_covered_by_evidence(
+                snippet_record.text,
+                same_page_evidence,
+            )
         )
         if snippet_record.query_role == "exact":
             exact_position += 1
@@ -468,9 +476,7 @@ def _clip_relevant_text(value: str, limit: int, query: str | None) -> str:
     if not terms:
         return _clip_text(text, limit)
     sentences = [
-        sentence.strip()
-        for sentence in re.split(r"(?<=[.!?])\s+", text)
-        if sentence.strip()
+        sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", text) if sentence.strip()
     ]
     matched: list[tuple[int, str, set[str], int]] = []
     for index, sentence in enumerate(sentences):
@@ -547,9 +553,7 @@ def _clip_relevant_window(text: str, limit: int, terms: set[str]) -> str:
     return prefix + text[start:end].strip() + suffix
 
 
-def _essential_snippet_indexes(
-    snippets: list[SearchSnippetRecord], topics: list[str]
-) -> set[int]:
+def _essential_snippet_indexes(snippets: list[SearchSnippetRecord], topics: list[str]) -> set[int]:
     essential = set(range(min(2, len(snippets))))
     for topic in topics[:6]:
         terms = set(meaningful_tokens(topic))
@@ -566,6 +570,16 @@ def _essential_snippet_indexes(
         if len(essential) >= 6:
             break
     return essential
+
+
+def _snippet_covered_by_evidence(snippet: str, evidence: str) -> bool:
+    """Suppress a same-page snippet only when retained evidence states the same content."""
+    snippet_terms = set(meaningful_tokens(snippet))
+    if not snippet_terms:
+        return True
+    evidence_terms = set(meaningful_tokens(evidence))
+    shared = snippet_terms & evidence_terms
+    return len(shared) >= min(4, len(snippet_terms)) and len(shared) / len(snippet_terms) >= 0.65
 
 
 def _url_identity(value: str) -> tuple[str, str, int | None, str, str]:

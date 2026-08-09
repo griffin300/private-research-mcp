@@ -167,6 +167,11 @@ The second command is intentionally not part of `stop.ps1`.
 
 `.\scripts\run-answer-quality.ps1` runs a paired, repeated comparison of raw SearXNG against the production adaptive hybrid. It freezes one exact-query top-10 snapshot per question and supplies that identical snapshot to both systems; order alternates, and the hybrid only adds context. It then uses the currently loaded local LM Studio model to synthesize cited answers. It reports retrieval readiness and deterministic answer-level fact/citation metrics separately; see `docs/EVALUATION.md` for the declared formulas and limitations.
 
+The latest controlled Qwen 3.6 27B frozen-context release comparison is in
+[`benchmarks/results/latest-27b-release-ab.md`](benchmarks/results/latest-27b-release-ab.md).
+It separates the full old-release comparison from the smaller, targeted final-pass check and
+states the scope and ceiling-effect limitations explicitly.
+
 The dashboard at `http://127.0.0.1:8088/dashboard` shows component health, cache activity, storage, recent opaque request metrics, coverage, and the last recorded privacy-suite result. It never displays raw queries by default.
 
 ## Troubleshooting
