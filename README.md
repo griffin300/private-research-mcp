@@ -6,6 +6,21 @@ Compared with a raw SearXNG MCP wrapper, it preserves the safe-normalized exact-
 
 Transient empty expansion searches are retried with a simplified query and are never negatively cached. The exact-query result remains exact. SearXNG uses a broader set of independent engines, adds technical/science/news verticals only when the query calls for them, and uses bounded suspension windows so a rotated Tor exit can recover. Deep-search work scales to the requested source count, while globally ranked evidence uses relevance-gated source diversity and duplicate penalties to keep downstream local-model prompts focused.
 
+## Origami Search
+
+The Community Edition in this repository is complete, free, and MIT-licensed.
+**Origami Search** is the paid edition. It adds three tools for professional private research:
+
+- `library_search`: search your own PDFs, Markdown, text, and HTML files fully offline,
+  with page-level `[lib_NNN]` citations.
+- `research_report`: save a complete, cited Markdown dossier for each investigation
+  (evidence by source, gaps, contradictions, and bibliography).
+- `watchlist`: private topic alerts that report only sources you have not seen before.
+
+Origami Search keeps the same local, Tor-routed privacy model and is delivered as access to a
+private GitHub repository with ongoing updates. Buying it funds continued development of the
+free edition. **[Get Origami Search](https://polar.sh/griffin300)**
+
 ## Status
 
 The core, Docker topology, MCP transports, tests, scripts, benchmark harness, and documentation are implemented. The release-blocking Docker privacy suite and live MCP search/read probes passed on the development host. Optional embeddings and browser fallback remain disabled by default.
